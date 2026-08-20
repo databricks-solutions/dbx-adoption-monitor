@@ -1,0 +1,21 @@
+variables:
+  my_warehouse_id:
+    description: The ID of a SQL warehouse for your dashboard and pipeline
+    lookup:
+      warehouse: "Serverless Starter Warehouse"
+  catalog_name:
+    description: The catalog containing your adoption dashboard tables
+    default: users
+  schema_name:
+    description: The schema containing your adoption dashboard tables
+    default: <your_schema>
+  skip_get_conversations:
+    description: Skip pulling all conversation content via API
+    default: false
+  enable_genie_feedback_comments:
+    description: Fetch free-text feedback comments per message (extra API call per message; set false to skip on very large workspaces)
+    default: true
+  lookback_days:
+    description: Rolling window (days) of system-table history each cost fact rebuilds every run.
+    default: 365
+  
