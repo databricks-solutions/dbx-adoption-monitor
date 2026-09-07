@@ -1,0 +1,65 @@
+# Reviewed architecture candidates derived from the legacy dashboard, SQL models,
+# baseline schema profile, and documented Genie cost semantics.
+metric_views:
+  - name: dashboard_adoption_metrics
+    source_table: fact_dashboard_view_event
+    rationale: Re-aggregation-safe dashboard views and unique viewers.
+  - name: dashboard_inventory_metrics
+    source_table: dim_dashboard
+    rationale: Current inventory including dashboards with no recent views.
+  - name: app_activity_metrics
+    source_table: fact_app_activity_event
+    rationale: Atomic lifecycle events and unique app users.
+  - name: app_authentication_metrics
+    source_table: fact_app_authentication_event
+    rationale: Atomic successful Databricks Apps OAuth authentications.
+  - name: app_permission_metrics
+    source_table: fact_app_permission_change_event
+    rationale: Atomic app ACL changes exploded to grantee grain.
+  - name: app_cost_metrics
+    source_table: fact_app_daily
+    rationale: Daily Apps DBU and USD cost without non-additive user counts.
+  - name: app_inventory_metrics
+    source_table: dim_app
+    rationale: Current app status and access-grant inventory.
+  - name: serving_adoption_metrics
+    source_table: fact_serving_endpoint_daily
+    rationale: Endpoint-grain requests, tokens, DBUs, and USD cost.
+  - name: vector_search_cost_metrics
+    source_table: fact_vector_search_daily
+    rationale: Vector Search DBU and cost with explicit attribution coverage.
+  - name: genie_reach_metrics
+    source_table: fact_genie_space_access_event
+    rationale: Atomic space opens, creations, and unique viewers.
+  - name: genie_conversation_metrics
+    source_table: fact_genie_message
+    rationale: Questions, conversations, completion, feedback, and SQL generation.
+  - name: genie_feedback_metrics
+    source_table: fact_genie_feedback_comment
+    rationale: Governed free-text feedback detail for the existing comments table.
+  - name: genie_warehouse_cost_metrics
+    source_table: fact_genie_query_cost_category
+    rationale: Complete warehouse cost split into usage, authoring, and overhead.
+  - name: genie_message_cost_metrics
+    source_table: fact_genie_message_cost
+    rationale: API-covered per-question warehouse cost and matching coverage.
+  - name: genie_token_cost_metrics
+    source_table: fact_genie_token_usage_daily
+    rationale: Separate LLM token DBU and USD cost by surface, channel, tier, and space.
+  - name: genie_space_adoption_metrics
+    source_table: fact_genie_space_daily_summary
+    rationale: Additive cross-source daily scorecard for dashboard KPIs.
+  - name: model_inventory_metrics
+    source_table: dim_uc_model
+    rationale: Current registered-model inventory and access grants.
+
+gaps:
+  - type: unavailable_source
+    domain: vector_search
+    suggestion: QPS, latency, and index-operation events are not available in the current system-table inputs; the first release remains cost-only.
+  - type: delayed_source
+    domain: genie_message_cost
+    suggestion: Query-history and billing completeness lag is exposed through Statements Missing Cost and Statement Cost Coverage.
+  - type: unsupported_history
+    domain: inventory
+    suggestion: API inventory dimensions are SCD1 current state; historical status and permission changes require a future SCD2 or snapshot policy.

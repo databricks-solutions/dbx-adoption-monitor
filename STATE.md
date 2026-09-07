@@ -4,7 +4,7 @@
 If you are an AI agent or a new contributor, read this first. Keep it current: when you finish
 something here, update this file in the same change.
 
-Last updated: 2026-08-20.
+Last updated: 2026-09-07.
 
 ---
 
@@ -29,10 +29,18 @@ validated live. It includes:
   serving, vector search, apps, plus Genie warehouse + token cost. See
   `docs/data-model-and-cost-attribution.md` for the cost-attribution reference (what reconciles and
   what does not).
-- **Dashboard** (`src/dashboards/lh_adoption_dashboard.lvdash.json`): 8 pages (Dashboards, Apps,
-  Models, 4× Genie, Global Filters).
+- **Dashboard** (`src/dashboards/lh_adoption_dashboard.lvdash.json`): 9 pages
+  (Dashboards, Apps, Models, Vector Search, 4× Genie, Global Filters).
 - **Tests** (`tests/`): pytest config checks + SQL `assert_true` fixtures (grain uniqueness,
   non-negativity, NOT-NULL invariants).
+- **Conformed model** (`src/04_*` through `src/08_*`): current-state dimensions,
+  re-aggregation-safe event facts, stable cost facts, and an additive daily Genie
+  scorecard, dual-published alongside every legacy physical table.
+- **Semantic layer** (`src/metric_views/`): source-controlled Unity Catalog Metric
+  Views with governed dimensions, atomic/composed measures, masked identities,
+  and no default materialization.
+- **Migrated dashboard**: all 31 legacy datasets now query Metric Views, and a
+  ninth Vector Search page adds DBU, USD, endpoint, SKU, and attribution coverage.
 
 **Data-correctness fixes already landed** (validated against live billing on a test workspace —
 each cost fact reconciles exactly to `system.billing.usage`):
@@ -46,16 +54,16 @@ each cost fact reconciles exactly to `system.billing.usage`):
 
 These are known, required cleanups for a public Solution. Each is a concrete action:
 
-- [ ] **De-hardcode the catalog/schema** in two dashboard datasets (`apps_views`, `uc_models` in the
+- [x] **De-hardcode the catalog/schema** in two dashboard datasets (`apps_views`, `uc_models` in the
       `.lvdash.json` — grep `field_eng_slc`). Use the bundle `dataset_catalog` / `dataset_schema`
       variables like every other dataset.
 - [ ] **Genericize internal references** left over from the source workspace: `field_eng_slc`,
       `e2-demo`, any workspace-specific IDs — in `docs/v3-system-table-validation.md`,
       `docs/data-model-and-cost-attribution.md`, and this file's roadmap section.
-- [ ] **Fix the relocated README disclaimer**: `docs/data-model-and-cost-attribution.md` carries the
+- [x] **Fix the relocated README disclaimer**: `docs/data-model-and-cost-attribution.md` carries the
       old "not endorsed by or affiliated with Databricks" wording — wrong for an official
       `databricks-solutions` repo. Remove/replace.
-- [ ] **Generic bundle defaults**: confirm `deployment_resources/variables.yml` defaults are generic
+- [x] **Generic bundle defaults**: confirm `deployment_resources/variables.yml` defaults are generic
       (schema placeholder; the warehouse `lookup` name must exist in the target workspace or be
       overridden at deploy).
 - [ ] **Confirm governance files** (`README.md`, `LICENSE.md`, `NOTICE.md`, `CODEOWNERS.txt`,
@@ -129,11 +137,11 @@ Modernise the AI/BI dashboard and make it fast — **largely solved by Part 3**:
 
 ## Migration ("If you're migrating")
 
-Parts 1 (rename) and the de-hardcode are intentionally **not backwards compatible** — expected for a
-major overhaul. The README must ship an "If you're migrating" section before those land. Because the
-pipeline is stateless, migration is: redeploy the new bundle → rerun the job (new-named tables
-appear) → repoint any *custom* downstream queries/dashboards built on the old names → drop the old
-tables. The bundled dashboard moves with the repo, so most users only touch their own artifacts.
+The current upgrade is additive for one major release. Redeploy and run the
+upgraded job to refresh both the legacy and conformed models. Existing custom
+readers can remain on the legacy physical tables while they migrate to Metric
+Views. Dropping or converting legacy objects requires a separately approved
+major release after downstream usage is assessed.
 
 ---
 

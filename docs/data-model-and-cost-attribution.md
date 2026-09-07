@@ -217,8 +217,9 @@ the comment fan-out was the long pole in `Ingest_Metadata`):
 Levers today: `enable_genie_feedback_comments=false` skips comments entirely;
 `skip_get_conversations=true` skips messages+comments.
 
-**Still open (larger, architectural — see the V3 branch for reference
-implementations in `src/includes/`):**
+The conformed model now publishes stable post-ingestion facts with
+`INSERT OVERWRITE` against persistent table identities. The legacy crawl remains
+a stateless full rebuild during the one-release compatibility window.
 
 - **Incremental ingest via watermarks.** The notebook drops and rebuilds all
   tables each run, and the `02_*.sql` MVs re-scan a 180-day `system.*` window
@@ -230,6 +231,24 @@ implementations in `src/includes/`):**
   `mode("overwrite")` to a workspace-scoped `MERGE` (keyed on the natural key +
   `workspace_id`) makes reruns idempotent, avoids full table rewrites, and lets
   two deployments safely share one catalog without clobbering each other's rows.
+
+## Conformed semantic objects
+
+The governed successors to the legacy Genie cost objects are:
+
+- `fact_dbsql_query_cost` and `genie_warehouse_cost_metrics` for complete
+  statement/space warehouse cost;
+- `fact_genie_message_cost` and `genie_message_cost_metrics` for the
+  Conversation API-covered per-question subset;
+- `fact_genie_query_cost_category` and `genie_warehouse_cost_metrics` for
+  conversational, authoring, and overhead classifications;
+- `fact_genie_token_usage_daily` and `genie_token_cost_metrics` for separate
+  LLM token DBU/USD cost;
+- `fact_genie_space_daily_summary` and `genie_space_adoption_metrics` for
+  additive cross-source dashboard scorecards.
+
+The dashboard uses these Metric Views through `MEASURE()` and labels warehouse
+and token costs separately.
 
 ⸻
 
@@ -245,8 +264,4 @@ implementations in `src/includes/`):**
 Contributions are welcome!
 
 Please open an issue or submit a pull request to propose enhancements, bug fixes, or new visualisations.
-
-## Disclaimer
-
-This code is not endorsed by or affiliated in any way with Databricks. Use it at your own risk and review everything before using it.
 

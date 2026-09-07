@@ -1,0 +1,160 @@
+CREATE OR REPLACE VIEW {{catalog_name}}.{{schema_name}}.genie_warehouse_cost_metrics
+WITH METRICS
+LANGUAGE YAML
+AS $$
+  version: 1.1
+  source: '{{catalog_yaml_identifier}}.{{schema_yaml_identifier}}.fact_genie_query_cost_category'
+  comment: "Governed complete Genie SQL warehouse cost metrics by conversational, authoring, schema-probe, metadata, and unattributed activity categories."
+  joins:
+    - name: dim_space
+      source: '{{catalog_yaml_identifier}}.{{schema_yaml_identifier}}.dim_genie_space'
+      'on': source.workspace_id = dim_space.workspace_id AND source.space_id = dim_space.space_id
+    - name: dim_workspace
+      source: '{{catalog_yaml_identifier}}.{{schema_yaml_identifier}}.dim_workspace'
+      'on': source.workspace_id = dim_workspace.workspace_id
+    - name: dim_principal
+      source: '{{catalog_yaml_identifier}}.{{schema_yaml_identifier}}.dim_principal'
+      'on': source.principal_id = dim_principal.principal_id
+  dimensions:
+    - name: Space ID
+      expr: source.space_id
+      comment: "Genie space identifier carried by SQL query history."
+      display_name: "Space ID"
+      synonyms: ["Genie space ID", "agent ID"]
+    - name: Space Name
+      expr: dim_space.space_name
+      comment: "Current Genie space display name."
+      display_name: "Space Name"
+      synonyms: ["Genie space", "Genie Agent"]
+    - name: Warehouse ID
+      expr: source.warehouse_id
+      comment: "SQL warehouse that executed the Genie statement."
+      display_name: "Warehouse ID"
+      synonyms: ["SQL warehouse"]
+    - name: Cost Category
+      expr: source.cost_category
+      comment: "Detailed statement classification: CONVERSATIONAL, AUTHORING_PROFILING, SCHEMA_PROBE, METADATA_OTHER, or OTHER_UNATTRIBUTED."
+      display_name: "Cost Category"
+      synonyms: ["activity category", "query category"]
+    - name: Cost Class
+      expr: source.cost_class
+      comment: "Coarse cost classification: USAGE, AUTHORING, or OVERHEAD_OR_UNATTRIBUTED."
+      display_name: "Cost Class"
+      synonyms: ["usage or overhead"]
+    - name: Activity Date
+      expr: source.activity_date
+      comment: "Calendar date on which the Genie SQL statement started."
+      display_name: "Activity Date"
+      synonyms: ["query date", "cost date"]
+      format:
+        type: date
+        date_format: year_month_day
+    - name: Activity Month
+      expr: "DATE_TRUNC('MONTH', source.activity_date)"
+      comment: "Calendar month in which the Genie SQL statement started."
+      display_name: "Activity Month"
+      synonyms: ["month"]
+      format:
+        type: date
+        date_format: locale_short_month
+    - name: Workspace ID
+      expr: source.workspace_id
+      comment: "Workspace in which the Genie SQL statement executed."
+      display_name: "Workspace ID"
+      synonyms: ["workspace"]
+    - name: Workspace Name
+      expr: dim_workspace.workspace_name
+      comment: "Current display name of the workspace."
+      display_name: "Workspace Name"
+      synonyms: ["workspace"]
+    - name: Executed By
+      expr: dim_principal.principal_email_masked
+      comment: "Masked identity that executed the Genie SQL statement."
+      display_name: "Executed By"
+      synonyms: ["user", "query user"]
+  measures:
+    - name: Genie Warehouse Cost USD
+      expr: SUM(source.warehouse_cost_usd)
+      comment: "Complete attributed Genie SQL warehouse cost at effective USD list price."
+      display_name: "Genie Warehouse Cost (USD)"
+      synonyms: ["Genie SQL cost", "space warehouse cost"]
+      format:
+        type: currency
+        currency_code: USD
+        decimal_places:
+          type: max
+          places: 2
+    - name: Genie Warehouse DBUs
+      expr: SUM(source.warehouse_dbus)
+      comment: "Complete attributed Databricks SQL warehouse DBUs for Genie statements."
+      display_name: "Genie Warehouse DBUs"
+      synonyms: ["Genie DBUs"]
+      format:
+        type: number
+        decimal_places:
+          type: max
+          places: 2
+    - name: Genie SQL Statements
+      expr: SUM(source.statement_count)
+      comment: "Total Genie SQL statements included in the cost attribution model."
+      display_name: "Genie SQL Statements"
+      synonyms: ["queries", "statements"]
+      format:
+        type: number
+        decimal_places:
+          type: exact
+          places: 0
+    - name: Conversational Warehouse Cost USD
+      expr: SUM(source.warehouse_cost_usd) FILTER (WHERE source.cost_class = 'USAGE')
+      comment: "Warehouse cost linked to API-visible Genie user questions."
+      display_name: "Conversational Warehouse Cost (USD)"
+      synonyms: ["question cost", "usage cost"]
+      format:
+        type: currency
+        currency_code: USD
+        decimal_places:
+          type: max
+          places: 2
+    - name: Authoring Warehouse Cost USD
+      expr: SUM(source.warehouse_cost_usd) FILTER (WHERE source.cost_class = 'AUTHORING')
+      comment: "Warehouse cost generated by Genie space setup and data profiling."
+      display_name: "Authoring Warehouse Cost (USD)"
+      synonyms: ["profiling cost", "setup cost"]
+      format:
+        type: currency
+        currency_code: USD
+        decimal_places:
+          type: max
+          places: 2
+    - name: Overhead Warehouse Cost USD
+      expr: SUM(source.warehouse_cost_usd) FILTER (WHERE source.cost_class = 'OVERHEAD_OR_UNATTRIBUTED')
+      comment: "Warehouse cost from schema probes, metadata work, or statements not linked to a listable conversation."
+      display_name: "Overhead Warehouse Cost (USD)"
+      synonyms: ["unattributed cost", "metadata cost"]
+      format:
+        type: currency
+        currency_code: USD
+        decimal_places:
+          type: max
+          places: 2
+    - name: Conversational Cost Share
+      expr: "TRY_DIVIDE(MEASURE(`Conversational Warehouse Cost USD`), MEASURE(`Genie Warehouse Cost USD`))"
+      comment: "Share of complete Genie warehouse cost linked to API-visible user questions."
+      display_name: "Conversational Cost Share"
+      synonyms: ["usage cost percentage"]
+      format:
+        type: percentage
+        decimal_places:
+          type: max
+          places: 2
+    - name: Query Work Seconds
+      expr: SUM(source.query_work_seconds)
+      comment: "Total query task-work seconds across Genie SQL statements."
+      display_name: "Query Work Seconds"
+      synonyms: ["query duration", "work time"]
+      format:
+        type: number
+        decimal_places:
+          type: max
+          places: 2
+$$
