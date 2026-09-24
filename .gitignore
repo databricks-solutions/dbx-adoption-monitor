@@ -1,0 +1,16 @@
+# OS / editor
+.DS_Store
+.idea/
+.env
+
+# Python
+__pycache__/
+
+# Databricks
+.databricks/
+*conf*.json
+includes/config.json
+
+# Internal working notes — never commit to this public repo
+.isaac/
+docs/superpowers/

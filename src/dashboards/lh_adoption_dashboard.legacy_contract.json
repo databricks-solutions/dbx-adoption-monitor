@@ -1,0 +1,1234 @@
+{
+  "dataset_count": 31,
+  "page_count": 8,
+  "widget_count": 75,
+  "dataset_widget_binding_count": 99,
+  "pages": [
+    {
+      "name": "1d47bc2c",
+      "display_name": "Dashboards",
+      "widget_count": 11,
+      "datasets": [
+        "9d2c306d",
+        "a5510c39",
+        "e2b9e81f",
+        "f8608a63"
+      ]
+    },
+    {
+      "name": "0319638f",
+      "display_name": "Apps",
+      "widget_count": 8,
+      "datasets": [
+        "0e741d6f",
+        "20c44dd1",
+        "255e661f",
+        "51bbce62",
+        "a19ba0f5"
+      ]
+    },
+    {
+      "name": "475d4e3a",
+      "display_name": "Models",
+      "widget_count": 5,
+      "datasets": [
+        "75376ae2"
+      ]
+    },
+    {
+      "name": "85a97342",
+      "display_name": "Global Filters",
+      "widget_count": 2,
+      "datasets": [
+        "e2b9e81f"
+      ]
+    },
+    {
+      "name": "950580dd",
+      "display_name": "Genie Space Overview",
+      "widget_count": 12,
+      "datasets": [
+        "gspaces",
+        "ov_kpi",
+        "ov_leaderboard",
+        "ov_trend"
+      ]
+    },
+    {
+      "name": "5573a1d0",
+      "display_name": "Genie Space Usage Analytics",
+      "widget_count": 14,
+      "datasets": [
+        "gspaces",
+        "us_comments",
+        "us_errors",
+        "us_feedback",
+        "us_kpi",
+        "us_reach",
+        "us_topusers",
+        "us_trend"
+      ]
+    },
+    {
+      "name": "d4a63ebe",
+      "display_name": "Genie Space Cost Analytics",
+      "widget_count": 12,
+      "datasets": [
+        "co_category",
+        "co_kpi",
+        "co_perq",
+        "co_token",
+        "gspaces"
+      ]
+    },
+    {
+      "name": "ec104f02",
+      "display_name": "Genie Token",
+      "widget_count": 11,
+      "datasets": [
+        "tk_channel",
+        "tk_kpi",
+        "tk_product",
+        "tk_tier",
+        "tk_trend",
+        "tk_user"
+      ]
+    }
+  ],
+  "datasets": [
+    {
+      "name": "e2b9e81f",
+      "display_name": "Dashboard_usage",
+      "source_objects": [
+        "mvFactDashboardUsage"
+      ],
+      "pages": [
+        "Dashboards",
+        "Global Filters"
+      ],
+      "widget_ids": [
+        "51f97bbd",
+        "910fb9ea",
+        "ac69a7af",
+        "b47771ce",
+        "c3a2d6ef",
+        "c7bcec3c",
+        "dashboard-name"
+      ],
+      "required_fields": [
+        "countdistinct(dashboard_id)",
+        "countdistinct(dashboard_name)",
+        "daily(viewed_date)",
+        "daily(viewed_date)_associativity",
+        "dashboard_name",
+        "dashboard_name_associativity",
+        "sum(num_views)",
+        "weekly(viewed_date)",
+        "workspace_name",
+        "workspace_name_associativity"
+      ],
+      "parameters": [],
+      "query_lines": [
+        "select\n",
+        "  * except(dashboard_name),\n",
+        "  case\n",
+        "    when dashboard_name rlike '.* [0-9]{4}-[0-9]{2}-[0-9]{2} .*' then 'unnamed_dashboard'\n",
+        "    else dashboard_name\n",
+        "  end as dashboard_name\n",
+        "from\n",
+        "  mvFactDashboardUsage"
+      ]
+    },
+    {
+      "name": "a5510c39",
+      "display_name": "stale_dashboards",
+      "source_objects": [
+        "mvFactDashboardUsage"
+      ],
+      "pages": [
+        "Dashboards"
+      ],
+      "widget_ids": [
+        "03f739a1",
+        "dashboard-name"
+      ],
+      "required_fields": [
+        "countdistinct(dashboard_name)",
+        "dashboard_name",
+        "dashboard_name_associativity"
+      ],
+      "parameters": [],
+      "query_lines": [
+        "select\n",
+        "  case\n",
+        "    when dashboard_name rlike '.* [0-9]{4}-[0-9]{2}-[0-9]{2} .*' then 'unnamed_dashboard'\n",
+        "    else dashboard_name\n",
+        "  end as dashboard_name,\n",
+        "  sum(num_views) as num_views\n",
+        "from\n",
+        "  mvFactDashboardUsage\n",
+        "  where viewed_date >= now()-interval 14 days\n",
+        "  group by dashboard_name\n",
+        "  having\n",
+        "  num_views < 10"
+      ]
+    },
+    {
+      "name": "9d2c306d",
+      "display_name": "ranked_dashboards",
+      "source_objects": [
+        "mvFactDashboardUsage",
+        "pivoted",
+        "ranked",
+        "weekly_ranks",
+        "weekly_views"
+      ],
+      "pages": [
+        "Dashboards"
+      ],
+      "widget_ids": [
+        "dashboard-name",
+        "e72aaa21"
+      ],
+      "required_fields": [
+        "dashboard_name",
+        "dashboard_name_associativity",
+        "last_week_views",
+        "overall_rank",
+        "rank_change",
+        "this_week_views"
+      ],
+      "parameters": [],
+      "query_lines": [
+        "WITH weekly_views AS (\n",
+        "  SELECT\n",
+        "    dashboard_id,\n",
+        "    workspace_id,\n",
+        "    first(dashboard_name) as dashboard_name,\n",
+        "    weekofyear(viewed_date) AS week_num,\n",
+        "    sum(num_views) AS num_views\n",
+        "  FROM mvFactDashboardUsage\n",
+        "  WHERE viewed_date >= current_date() - INTERVAL 21 DAYS\n",
+        "  GROUP BY dashboard_id, workspace_id, weekofyear(viewed_date)\n",
+        "),\n",
+        "weekly_ranks AS (\n",
+        "  SELECT\n",
+        "    dashboard_id,\n",
+        "    workspace_id,\n",
+        "    dashboard_name,\n",
+        "    week_num,\n",
+        "    num_views,\n",
+        "    DENSE_RANK() OVER (PARTITION BY week_num ORDER BY num_views DESC) AS week_rank\n",
+        "  FROM weekly_views\n",
+        "),\n",
+        "pivoted AS (\n",
+        "  SELECT\n",
+        "    dashboard_id,\n",
+        "    workspace_id,\n",
+        "    first(dashboard_name) as dashboard_name,\n",
+        "    coalesce(MAX(CASE WHEN week_num = weekofyear(current_date()) THEN num_views END), 0) AS week_0_views,\n",
+        "    coalesce(MAX(CASE WHEN week_num = weekofyear(current_date() - INTERVAL 7 DAYS) THEN num_views END), 0 ) AS week_1_views,\n",
+        "    coalesce(MAX(CASE WHEN week_num = weekofyear(current_date() - INTERVAL 14 DAYS) THEN num_views END), 0 ) AS week_2_views,\n",
+        "    coalesce(MAX(CASE WHEN week_num = weekofyear(current_date()) THEN week_rank END), 999) AS week_0_rank,\n",
+        "    coalesce(MAX(CASE WHEN week_num = weekofyear(current_date() - INTERVAL 7 DAYS) THEN week_rank END), 999) AS week_1_rank,\n",
+        "    coalesce(MAX(CASE WHEN week_num = weekofyear(current_date() - INTERVAL 14 DAYS) THEN week_rank END), 999) AS week_2_rank,\n",
+        "    SUM(num_views) AS total_views\n",
+        "  FROM weekly_ranks\n",
+        "  GROUP BY dashboard_id,workspace_id\n",
+        "),\n",
+        "ranked AS (\n",
+        "  SELECT\n",
+        "    dashboard_id,\n",
+        "    workspace_id,\n",
+        "    dashboard_name,\n",
+        "    week_0_views,\n",
+        "    week_1_views,\n",
+        "    week_2_views,\n",
+        "    week_0_rank,\n",
+        "    week_1_rank,\n",
+        "    week_2_rank,\n",
+        "    total_views,\n",
+        "    ROW_NUMBER() OVER (ORDER BY total_views DESC) AS overall_rank\n",
+        "  FROM pivoted\n",
+        ")\n",
+        "SELECT\n",
+        "  overall_rank,\n",
+        "  r.dashboard_name,\n",
+        "  dashboard_id,\n",
+        "  workspace_id,\n",
+        "  coalesce(week_0_views,week_1_views) AS this_week_views,\n",
+        "  coalesce(week_0_rank,week_1_rank) AS this_week_rank,\n",
+        "  week_1_views AS last_week_views,\n",
+        "  week_1_rank AS last_week_rank,\n",
+        "  week_2_views AS two_weeks_ago_views,\n",
+        "  week_2_rank AS two_weeks_ago_rank,\n",
+        "  this_week_rank - last_week_rank AS rank_change\n",
+        "FROM ranked r\n",
+        "WHERE overall_rank <= 10 and week_0_rank < 999\n",
+        "ORDER BY overall_rank\n",
+        "-- \n"
+      ]
+    },
+    {
+      "name": "51bbce62",
+      "display_name": "apps_user_access",
+      "source_objects": [
+        "system.access.audit"
+      ],
+      "pages": [
+        "Apps"
+      ],
+      "widget_ids": [
+        "96a8c8e5",
+        "fa0bbb89"
+      ],
+      "required_fields": [
+        "monthly(event_date)",
+        "sum(user_login_events)"
+      ],
+      "parameters": [],
+      "query_lines": [
+        "-- Note this is anonmyised, use the link here to find a more representative query\n",
+        "-- https://docs.databricks.com/aws/en/admin/system-tables/audit-logs#which-users-have-logged-into-a-databricks-app\n",
+        "select \n",
+        "event_date,\n",
+        "count(*) as user_login_events\n",
+        " FROM   system.access.audit\n",
+        " WHERE\n",
+        "action_name IN (\"workspaceInHouseOAuthClientAuthentication\", \"mintOAuthToken\", \"mintOAuthAuthorizationCode\")\n",
+        "and request_params[\"client_id\"] != 'databricks-cli'\n",
+        "and response.status_code = 200\n",
+        "group by all\n",
+        "order by event_date desc"
+      ]
+    },
+    {
+      "name": "0e741d6f",
+      "display_name": "apps_permission_changes",
+      "source_objects": [
+        "system.access.audit"
+      ],
+      "pages": [
+        "Apps"
+      ],
+      "widget_ids": [
+        "3ee58ea5"
+      ],
+      "required_fields": [
+        "acl_entry.permission_level",
+        "count(acl_entry.user_name)",
+        "monthly(event_date)"
+      ],
+      "parameters": [],
+      "query_lines": [
+        "SELECT\n",
+        "  event_date,\n",
+        "  workspace_id,\n",
+        "  request_params['request_object_id'] as app,\n",
+        "  user_identity['email'] as sharing_user,\n",
+        "  acl_entry['group_name'],\n",
+        "  acl_entry['user_name'],\n",
+        "  acl_entry['permission_level']\n",
+        "FROM\n",
+        "  system.access.audit t\n",
+        "LATERAL VIEW\n",
+        "  explode(from_json(request_params['access_control_list'], 'array<struct<user_name:string,permission_level:string,group_name:string>>')) acl_entry AS acl_entry\n",
+        "WHERE\n",
+        "  action_name = 'changeAppsAcl'\n",
+        "AND\n",
+        "  request_params['request_object_type'] = 'apps'\n",
+        "ORDER BY\n",
+        "  event_date DESC\n",
+        "\n"
+      ]
+    },
+    {
+      "name": "20c44dd1",
+      "display_name": "apps_actions",
+      "source_objects": [
+        "system.access.audit"
+      ],
+      "pages": [
+        "Apps"
+      ],
+      "widget_ids": [
+        "ec364792"
+      ],
+      "required_fields": [
+        "action_name",
+        "monthly(event_date)",
+        "sum(actions)"
+      ],
+      "parameters": [],
+      "query_lines": [
+        "SELECT\n",
+        "  event_date,\n",
+        "  action_name,\n",
+        "  count(*) as actions\n",
+        "FROM\n",
+        "  system.access.audit\n",
+        "WHERE\n",
+        "  action_name like \"%App\"\n",
+        "group by action_name, event_date\n",
+        "ORDER BY\n",
+        "  event_date DESC"
+      ]
+    },
+    {
+      "name": "255e661f",
+      "display_name": "apps_top_users",
+      "source_objects": [
+        "ranked",
+        "system.access.audit"
+      ],
+      "pages": [
+        "Apps"
+      ],
+      "widget_ids": [
+        "1a5ab142"
+      ],
+      "required_fields": [
+        "email",
+        "sum(action_count)"
+      ],
+      "parameters": [],
+      "query_lines": [
+        "with ranked as (\n",
+        "SELECT\n",
+        "  regexp_replace(user_identity.email, r'^[^.]+(?=\\.)', \"*****\") AS email,\n",
+        "  COUNT(*) AS action_count\n",
+        "FROM\n",
+        "  system.access.audit\n",
+        "WHERE\n",
+        "  service_name = 'apps'\n",
+        "  AND event_time >= now() - INTERVAL 7 days\n",
+        "  and contains(user_identity.email, '@')\n",
+        "GROUP BY\n",
+        "  user_identity.email\n",
+        "ORDER BY\n",
+        "  action_count DESC\n",
+        "LIMIT 10\n",
+        ")\n",
+        "select * from ranked"
+      ]
+    },
+    {
+      "name": "f8608a63",
+      "display_name": "dashboard_climbers_decliners",
+      "source_objects": [
+        "climbers",
+        "decliners",
+        "diffs",
+        "monthly_views",
+        "mvFactDashboardUsage",
+        "pivoted"
+      ],
+      "pages": [
+        "Dashboards"
+      ],
+      "widget_ids": [
+        "climbers-over-last-month",
+        "dashboard-name",
+        "decliners-over-last-month"
+      ],
+      "required_fields": [
+        "dashboard_name",
+        "dashboard_name_associativity",
+        "type",
+        "view_diff"
+      ],
+      "parameters": [],
+      "query_lines": [
+        "WITH monthly_views AS (\n",
+        "  SELECT\n",
+        "    dashboard_id,\n",
+        "    any_value(dashboard_name) as dashboard_name,\n",
+        "    DATE_TRUNC('month', viewed_date) AS month,\n",
+        "    SUM(num_views) AS total_views\n",
+        "  FROM mvFactDashboardUsage\n",
+        "  WHERE viewed_date >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '1' MONTH\n",
+        "  GROUP BY dashboard_id, DATE_TRUNC('month', viewed_date)\n",
+        "),\n",
+        "pivoted AS (\n",
+        "  SELECT\n",
+        "    dashboard_name,\n",
+        "    MAX(CASE WHEN month = DATE_TRUNC('month', CURRENT_DATE) THEN total_views END) AS this_month_views,\n",
+        "    MAX(CASE WHEN month = DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '1' MONTH THEN total_views END) AS last_month_views\n",
+        "  FROM monthly_views\n",
+        "  GROUP BY dashboard_name\n",
+        "),\n",
+        "diffs AS (\n",
+        "  SELECT\n",
+        "    dashboard_name,\n",
+        "    COALESCE(this_month_views, 0) - COALESCE(last_month_views, 0) AS view_diff\n",
+        "  FROM pivoted\n",
+        "),\n",
+        "climbers AS (\n",
+        "  SELECT\n",
+        "    dashboard_name,\n",
+        "    view_diff,\n",
+        "    'Climber' AS type,\n",
+        "    1 AS sort_order,\n",
+        "    DENSE_RANK() OVER (ORDER BY view_diff DESC) AS rank\n",
+        "  FROM diffs\n",
+        "  ORDER BY view_diff DESC\n",
+        "  LIMIT 20\n",
+        "),\n",
+        "decliners AS (\n",
+        "  SELECT\n",
+        "    dashboard_name,\n",
+        "    view_diff,\n",
+        "    'Decliner' AS type,\n",
+        "    2 AS sort_order,\n",
+        "    DENSE_RANK() OVER (ORDER BY view_diff ASC) AS rank\n",
+        "  FROM diffs\n",
+        "  ORDER BY view_diff ASC\n",
+        "  LIMIT 20\n",
+        ")\n",
+        "SELECT dashboard_name, view_diff, type, rank\n",
+        "FROM (\n",
+        "  (SELECT dashboard_name, view_diff, type, sort_order, rank FROM climbers)\n",
+        "  UNION ALL\n",
+        "  (SELECT dashboard_name, view_diff, type, sort_order, rank FROM decliners)\n",
+        ")\n",
+        "ORDER BY sort_order, rank"
+      ]
+    },
+    {
+      "name": "a19ba0f5",
+      "display_name": "apps_views",
+      "source_objects": [
+        "mvfactappusage"
+      ],
+      "pages": [
+        "Apps"
+      ],
+      "widget_ids": [
+        "application-name",
+        "top-apps-by-views"
+      ],
+      "required_fields": [
+        "app_name",
+        "app_name_associativity",
+        "sum(distinct_users)"
+      ],
+      "parameters": [],
+      "query_lines": [
+        "select * from mvfactappusage"
+      ]
+    },
+    {
+      "name": "75376ae2",
+      "display_name": "uc_models",
+      "source_objects": [
+        "mvFactServingUsage"
+      ],
+      "pages": [
+        "Models"
+      ],
+      "widget_ids": [
+        "model-name",
+        "model-views-by-workspace",
+        "number-of-inferences",
+        "total-views",
+        "view-trends-by-workspaces"
+      ],
+      "required_fields": [
+        "entity_name",
+        "entity_name_associativity",
+        "monthly(usage_date)",
+        "request_count",
+        "sum(request_count)",
+        "workspace_name"
+      ],
+      "parameters": [],
+      "query_lines": [
+        "select * from mvFactServingUsage"
+      ]
+    },
+    {
+      "name": "gspaces",
+      "display_name": "genie_space_filter",
+      "source_objects": [
+        "adb_genie_spaces"
+      ],
+      "pages": [
+        "Genie Space Cost Analytics",
+        "Genie Space Overview",
+        "Genie Space Usage Analytics"
+      ],
+      "widget_ids": [
+        "1f8702ab",
+        "35a73b24",
+        "c64a491d"
+      ],
+      "required_fields": [
+        "space_id",
+        "space_name"
+      ],
+      "parameters": [],
+      "query_lines": [
+        "SELECT space_id, name AS space_name FROM adb_genie_spaces\n"
+      ]
+    },
+    {
+      "name": "ov_kpi",
+      "display_name": "ov_kpi",
+      "source_objects": [
+        "adb_genie_messages",
+        "dbsql_cost_per_query_table",
+        "msg",
+        "mvFactGenieTokenUsage"
+      ],
+      "pages": [
+        "Genie Space Overview"
+      ],
+      "widget_ids": [
+        "05627407",
+        "35a73b24",
+        "7919658e",
+        "7e2a510f",
+        "8f2a0cf7",
+        "9e80812f",
+        "ae8c8d08",
+        "af1f89a2"
+      ],
+      "required_fields": [
+        "active_spaces",
+        "questions",
+        "token_dbus",
+        "token_usd",
+        "users",
+        "warehouse_usd"
+      ],
+      "parameters": [
+        "param",
+        "space_id"
+      ],
+      "query_lines": [
+        "WITH msg AS (\n",
+        "  SELECT COUNT(*) questions, COUNT(DISTINCT user_email) users, COUNT(DISTINCT space_id) active_spaces\n",
+        "  FROM adb_genie_messages\n",
+        "  WHERE created_timestamp >= :param.min AND created_timestamp <= :param.max AND (:space_id = 'ALL' OR space_id = :space_id)\n",
+        "),\n",
+        "wh AS (\n",
+        "  SELECT SUM(query_attributed_dollars_estimation) usd FROM dbsql_cost_per_query_table\n",
+        "  WHERE query_source_type='GENIE SPACE' AND start_time >= :param.min AND start_time <= :param.max AND (:space_id = 'ALL' OR query_source_id = :space_id)\n",
+        "),\n",
+        "tok AS (\n",
+        "  SELECT SUM(token_cost_usd) usd, SUM(token_dbus) dbus FROM mvFactGenieTokenUsage\n",
+        "  WHERE genie_surface='GENIE_AGENTS' AND usage_date >= :param.min AND usage_date <= :param.max AND (:space_id = 'ALL' OR agent_id = :space_id)\n",
+        ")\n",
+        "SELECT msg.active_spaces, msg.questions, msg.users, COALESCE(wh.usd,0) warehouse_usd, COALESCE(tok.usd,0) token_usd, COALESCE(tok.dbus,0) token_dbus\n",
+        "FROM msg, wh, tok\n"
+      ]
+    },
+    {
+      "name": "ov_leaderboard",
+      "display_name": "ov_space_leaderboard",
+      "source_objects": [
+        "adb_genie_messages",
+        "dbsql_cost_per_query_table",
+        "fb",
+        "msg",
+        "mvFactGenieTokenUsage",
+        "mvFactGenieUsage",
+        "tok",
+        "views",
+        "wh"
+      ],
+      "pages": [
+        "Genie Space Overview"
+      ],
+      "widget_ids": [
+        "00d0a43f",
+        "05627407",
+        "35a73b24",
+        "c2d68c68"
+      ],
+      "required_fields": [
+        "negative",
+        "positive",
+        "questions",
+        "space_name",
+        "token_usd",
+        "users",
+        "views",
+        "warehouse_usd"
+      ],
+      "parameters": [
+        "param",
+        "space_id"
+      ],
+      "query_lines": [
+        "WITH msg AS (\n",
+        "  SELECT space_id, space_name, COUNT(*) questions, COUNT(DISTINCT user_email) users\n",
+        "  FROM adb_genie_messages WHERE created_timestamp >= :param.min AND created_timestamp <= :param.max AND (:space_id = 'ALL' OR space_id = :space_id)\n",
+        "  GROUP BY 1,2\n",
+        "),\n",
+        "views AS (\n",
+        "  SELECT space_id, SUM(space_views) views FROM mvFactGenieUsage\n",
+        "  WHERE activity_date >= :param.min AND activity_date <= :param.max AND (:space_id = 'ALL' OR space_id = :space_id) GROUP BY 1\n",
+        "),\n",
+        "wh AS (\n",
+        "  SELECT query_source_id space_id, SUM(query_attributed_dollars_estimation) warehouse_usd FROM dbsql_cost_per_query_table\n",
+        "  WHERE query_source_type='GENIE SPACE' AND start_time >= :param.min AND start_time <= :param.max AND (:space_id = 'ALL' OR query_source_id = :space_id) GROUP BY 1\n",
+        "),\n",
+        "tok AS (\n",
+        "  SELECT agent_id space_id, SUM(token_cost_usd) token_usd FROM mvFactGenieTokenUsage\n",
+        "  WHERE genie_surface='GENIE_AGENTS' AND usage_date >= :param.min AND usage_date <= :param.max AND (:space_id = 'ALL' OR agent_id = :space_id) GROUP BY 1\n",
+        "),\n",
+        "fb AS (\n",
+        "  SELECT space_id, COUNT_IF(feedback_rating='POSITIVE') pos, COUNT_IF(feedback_rating='NEGATIVE') neg\n",
+        "  FROM adb_genie_messages WHERE (:space_id = 'ALL' OR space_id = :space_id) GROUP BY 1\n",
+        ")\n",
+        "SELECT m.space_name, m.questions, m.users, COALESCE(v.views,0) views,\n",
+        "       COALESCE(w.warehouse_usd,0) warehouse_usd, COALESCE(t.token_usd,0) token_usd,\n",
+        "       COALESCE(fb.pos,0) positive, COALESCE(fb.neg,0) negative\n",
+        "FROM msg m\n",
+        "LEFT JOIN views v ON m.space_id=v.space_id\n",
+        "LEFT JOIN wh w ON m.space_id=w.space_id\n",
+        "LEFT JOIN tok t ON m.space_id=t.space_id\n",
+        "LEFT JOIN fb ON m.space_id=fb.space_id\n"
+      ]
+    },
+    {
+      "name": "ov_trend",
+      "display_name": "ov_adoption_trend",
+      "source_objects": [
+        "adb_genie_messages"
+      ],
+      "pages": [
+        "Genie Space Overview"
+      ],
+      "widget_ids": [
+        "05627407",
+        "35a73b24",
+        "bf71c948"
+      ],
+      "required_fields": [
+        "day",
+        "questions"
+      ],
+      "parameters": [
+        "param",
+        "space_id"
+      ],
+      "query_lines": [
+        "SELECT DATE_TRUNC('DAY', created_timestamp) AS day, COUNT(*) questions, COUNT(DISTINCT user_email) users\n",
+        "FROM adb_genie_messages WHERE created_timestamp >= :param.min AND created_timestamp <= :param.max AND (:space_id = 'ALL' OR space_id = :space_id)\n",
+        "GROUP BY 1 ORDER BY 1\n"
+      ]
+    },
+    {
+      "name": "us_kpi",
+      "display_name": "us_kpi",
+      "source_objects": [
+        "adb_genie_messages",
+        "mc",
+        "msg",
+        "mvFactGenieUsage"
+      ],
+      "pages": [
+        "Genie Space Usage Analytics"
+      ],
+      "widget_ids": [
+        "1f8702ab",
+        "8319f94b",
+        "9a4c1c59",
+        "d391ea08",
+        "da05fd8c",
+        "e440dd9f"
+      ],
+      "required_fields": [
+        "median",
+        "questions",
+        "users",
+        "views"
+      ],
+      "parameters": [
+        "param",
+        "space_id"
+      ],
+      "query_lines": [
+        "WITH msg AS (\n",
+        "  SELECT COUNT(*) questions, COUNT(DISTINCT user_email) users, COUNT(DISTINCT conversation_id) convs\n",
+        "  FROM adb_genie_messages WHERE created_timestamp >= :param.min AND created_timestamp <= :param.max AND (:space_id = 'ALL' OR space_id = :space_id)\n",
+        "),\n",
+        "mc AS (\n",
+        "  SELECT conversation_id, COUNT(*) c FROM adb_genie_messages\n",
+        "  WHERE created_timestamp >= :param.min AND created_timestamp <= :param.max AND (:space_id = 'ALL' OR space_id = :space_id) GROUP BY 1\n",
+        "),\n",
+        "views AS (\n",
+        "  SELECT SUM(space_views) views FROM mvFactGenieUsage\n",
+        "  WHERE activity_date >= :param.min AND activity_date <= :param.max AND (:space_id = 'ALL' OR space_id = :space_id)\n",
+        ")\n",
+        "SELECT msg.questions, msg.users, COALESCE(views.views,0) views,\n",
+        "       (SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY c) FROM mc) median_msgs_per_conv\n",
+        "FROM msg, views\n"
+      ]
+    },
+    {
+      "name": "us_reach",
+      "display_name": "us_reach_vs_depth",
+      "source_objects": [
+        "adb_genie_messages",
+        "mvFactGenieUsage",
+        "q",
+        "v"
+      ],
+      "pages": [
+        "Genie Space Usage Analytics"
+      ],
+      "widget_ids": [
+        "1f8702ab",
+        "39444785",
+        "7495d0f3",
+        "9a4c1c59"
+      ],
+      "required_fields": [
+        "questions",
+        "space_name",
+        "views"
+      ],
+      "parameters": [
+        "param",
+        "space_id"
+      ],
+      "query_lines": [
+        "WITH v AS (SELECT space_id, SUM(space_views) views FROM mvFactGenieUsage WHERE activity_date>=:param.min AND activity_date<=:param.max AND (:space_id = 'ALL' OR space_id = :space_id) GROUP BY 1),\n",
+        "q AS (SELECT space_id, space_name, COUNT(*) questions FROM adb_genie_messages WHERE created_timestamp>=:param.min AND created_timestamp<=:param.max AND (:space_id = 'ALL' OR space_id = :space_id) GROUP BY 1,2)\n",
+        "SELECT q.space_name, COALESCE(v.views,0) views, q.questions FROM q LEFT JOIN v ON q.space_id=v.space_id\n"
+      ]
+    },
+    {
+      "name": "us_trend",
+      "display_name": "us_questions_over_time",
+      "source_objects": [
+        "adb_genie_messages"
+      ],
+      "pages": [
+        "Genie Space Usage Analytics"
+      ],
+      "widget_ids": [
+        "1f8702ab",
+        "53f15146",
+        "9a4c1c59"
+      ],
+      "required_fields": [
+        "day",
+        "questions"
+      ],
+      "parameters": [
+        "param",
+        "space_id"
+      ],
+      "query_lines": [
+        "SELECT DATE_TRUNC('DAY',created_timestamp) day, COUNT(*) questions FROM adb_genie_messages\n",
+        "WHERE created_timestamp>=:param.min AND created_timestamp<=:param.max AND (:space_id = 'ALL' OR space_id = :space_id) GROUP BY 1 ORDER BY 1\n"
+      ]
+    },
+    {
+      "name": "us_feedback",
+      "display_name": "us_feedback_dist",
+      "source_objects": [
+        "adb_genie_messages"
+      ],
+      "pages": [
+        "Genie Space Usage Analytics"
+      ],
+      "widget_ids": [
+        "13a49c75",
+        "1f8702ab",
+        "9a4c1c59"
+      ],
+      "required_fields": [
+        "feedback_rating",
+        "sum(messages)"
+      ],
+      "parameters": [
+        "param",
+        "space_id"
+      ],
+      "query_lines": [
+        "SELECT space_name, feedback_rating, COUNT(*) messages FROM adb_genie_messages\n",
+        "WHERE created_timestamp>=:param.min AND created_timestamp<=:param.max AND (:space_id = 'ALL' OR space_id = :space_id) GROUP BY 1,2\n"
+      ]
+    },
+    {
+      "name": "us_comments",
+      "display_name": "us_comments",
+      "source_objects": [
+        "adb_genie_message_comments"
+      ],
+      "pages": [
+        "Genie Space Usage Analytics"
+      ],
+      "widget_ids": [
+        "0da4221d",
+        "1f8702ab",
+        "9a4c1c59"
+      ],
+      "required_fields": [
+        "comment_text",
+        "created_timestamp",
+        "space_name"
+      ],
+      "parameters": [
+        "param",
+        "space_id"
+      ],
+      "query_lines": [
+        "SELECT c.space_name, c.user_id, c.comment_text, c.created_timestamp\n",
+        "FROM adb_genie_message_comments c\n",
+        "WHERE c.created_timestamp>=:param.min AND c.created_timestamp<=:param.max AND (:space_id = 'ALL' OR c.space_id = :space_id)\n",
+        "ORDER BY c.created_timestamp DESC\n"
+      ]
+    },
+    {
+      "name": "us_errors",
+      "display_name": "us_error_rate",
+      "source_objects": [
+        "adb_genie_messages"
+      ],
+      "pages": [
+        "Genie Space Usage Analytics"
+      ],
+      "widget_ids": [
+        "1f8702ab",
+        "40ccf883",
+        "9a4c1c59"
+      ],
+      "required_fields": [
+        "errors",
+        "space_name"
+      ],
+      "parameters": [
+        "param",
+        "space_id"
+      ],
+      "query_lines": [
+        "SELECT space_name,\n",
+        "  COUNT(*) total,\n",
+        "  COUNT_IF(error_type IS NOT NULL OR upper(status) LIKE '%FAIL%') errors\n",
+        "FROM adb_genie_messages WHERE created_timestamp>=:param.min AND created_timestamp<=:param.max AND (:space_id = 'ALL' OR space_id = :space_id) GROUP BY 1\n"
+      ]
+    },
+    {
+      "name": "us_topusers",
+      "display_name": "us_top_users",
+      "source_objects": [
+        "adb_genie_messages"
+      ],
+      "pages": [
+        "Genie Space Usage Analytics"
+      ],
+      "widget_ids": [
+        "1f8702ab",
+        "3a8b974c",
+        "9a4c1c59"
+      ],
+      "required_fields": [
+        "questions",
+        "user_email"
+      ],
+      "parameters": [
+        "param",
+        "space_id"
+      ],
+      "query_lines": [
+        "SELECT user_email, COUNT(*) questions FROM adb_genie_messages\n",
+        "WHERE created_timestamp>=:param.min AND created_timestamp<=:param.max AND user_email IS NOT NULL AND (:space_id = 'ALL' OR space_id = :space_id)\n",
+        "GROUP BY 1 ORDER BY questions DESC LIMIT 15\n"
+      ]
+    },
+    {
+      "name": "co_kpi",
+      "display_name": "co_kpi",
+      "source_objects": [
+        "adb_genie_messages",
+        "dbsql_cost_per_query_table",
+        "mvFactGenieTokenUsage",
+        "wh"
+      ],
+      "pages": [
+        "Genie Space Cost Analytics"
+      ],
+      "widget_ids": [
+        "00874e41",
+        "19efd5ec",
+        "998b5da3",
+        "a76efd43",
+        "c64a491d"
+      ],
+      "required_fields": [
+        "avg_wh_per_q",
+        "token_usd",
+        "warehouse_usd"
+      ],
+      "parameters": [
+        "param",
+        "space_id"
+      ],
+      "query_lines": [
+        "WITH wh AS (SELECT SUM(query_attributed_dollars_estimation) usd, COUNT(DISTINCT statement_id) stmts FROM dbsql_cost_per_query_table WHERE query_source_type='GENIE SPACE' AND start_time>=:param.min AND start_time<=:param.max AND (:space_id = 'ALL' OR query_source_id = :space_id)),\n",
+        "tok AS (SELECT SUM(token_cost_usd) usd FROM mvFactGenieTokenUsage WHERE genie_surface='GENIE_AGENTS' AND usage_date>=:param.min AND usage_date<=:param.max AND (:space_id = 'ALL' OR agent_id = :space_id)),\n",
+        "q AS (SELECT COUNT(*) questions FROM adb_genie_messages WHERE created_timestamp>=:param.min AND created_timestamp<=:param.max AND (:space_id = 'ALL' OR space_id = :space_id))\n",
+        "SELECT COALESCE(wh.usd,0) warehouse_usd, COALESCE(tok.usd,0) token_usd,\n",
+        "       CASE WHEN q.questions>0 THEN COALESCE(wh.usd,0)/q.questions ELSE 0 END avg_wh_per_q\n",
+        "FROM wh, tok, q\n"
+      ]
+    },
+    {
+      "name": "co_category",
+      "display_name": "co_cost_by_category",
+      "source_objects": [
+        "adb_genie_spaces",
+        "genie_cost_categorised"
+      ],
+      "pages": [
+        "Genie Space Cost Analytics"
+      ],
+      "widget_ids": [
+        "0084cce2",
+        "4ed2964f",
+        "998b5da3",
+        "c64a491d"
+      ],
+      "required_fields": [
+        "cost_usd",
+        "genie_cost_category",
+        "genie_cost_class",
+        "genie_space",
+        "sum(cost_usd)"
+      ],
+      "parameters": [
+        "param",
+        "space_id"
+      ],
+      "query_lines": [
+        "SELECT s.name genie_space, v.genie_cost_category, v.genie_cost_class,\n",
+        "       SUM(v.query_attributed_dollars_estimation) cost_usd\n",
+        "FROM genie_cost_categorised v JOIN adb_genie_spaces s ON v.query_source_id=s.space_id\n",
+        "WHERE v.start_time>=:param.min AND v.start_time<=:param.max AND (:space_id = 'ALL' OR v.query_source_id = :space_id)\n",
+        "GROUP BY ALL\n"
+      ]
+    },
+    {
+      "name": "co_perq",
+      "display_name": "co_cost_per_question",
+      "source_objects": [
+        "genie_cost_per_message_table"
+      ],
+      "pages": [
+        "Genie Space Cost Analytics"
+      ],
+      "widget_ids": [
+        "7df31aa9",
+        "998b5da3",
+        "c64a491d"
+      ],
+      "required_fields": [
+        "cost_usd",
+        "num_statements",
+        "question",
+        "space_name"
+      ],
+      "parameters": [
+        "param",
+        "space_id"
+      ],
+      "query_lines": [
+        "SELECT space_name, LEFT(user_question,80) question, num_statements, ROUND(message_cost_usd,5) cost_usd\n",
+        "FROM genie_cost_per_message_table\n",
+        "WHERE created_datetime>=:param.min AND created_datetime<=:param.max AND (:space_id = 'ALL' OR space_id = :space_id)\n",
+        "ORDER BY message_cost_usd DESC LIMIT 25\n"
+      ]
+    },
+    {
+      "name": "co_token",
+      "display_name": "co_token_by_space",
+      "source_objects": [
+        "mvFactGenieTokenUsage"
+      ],
+      "pages": [
+        "Genie Space Cost Analytics"
+      ],
+      "widget_ids": [
+        "998b5da3",
+        "9a403500",
+        "c64a491d"
+      ],
+      "required_fields": [
+        "space_name",
+        "token_dbus"
+      ],
+      "parameters": [
+        "param",
+        "space_id"
+      ],
+      "query_lines": [
+        "SELECT space_name, SUM(token_dbus) token_dbus, SUM(token_cost_usd) token_usd\n",
+        "FROM mvFactGenieTokenUsage WHERE genie_surface='GENIE_AGENTS' AND space_name IS NOT NULL\n",
+        "  AND usage_date>=:param.min AND usage_date<=:param.max AND (:space_id = 'ALL' OR agent_id = :space_id)\n",
+        "GROUP BY 1 ORDER BY token_dbus DESC\n"
+      ]
+    },
+    {
+      "name": "tk_kpi",
+      "display_name": "tk_kpi",
+      "source_objects": [
+        "mvFactGenieTokenUsage"
+      ],
+      "pages": [
+        "Genie Token"
+      ],
+      "widget_ids": [
+        "078e7fe6",
+        "139b1145",
+        "1c212fa8",
+        "2416f287",
+        "c14af1c6"
+      ],
+      "required_fields": [
+        "dbus",
+        "free_dbus",
+        "paid_dbus",
+        "usd"
+      ],
+      "parameters": [
+        "param"
+      ],
+      "query_lines": [
+        "SELECT SUM(token_dbus) dbus, SUM(token_cost_usd) usd,\n",
+        "  SUM(CASE WHEN tier='FREE' THEN token_dbus ELSE 0 END) free_dbus,\n",
+        "  SUM(CASE WHEN tier='PAID' THEN token_dbus ELSE 0 END) paid_dbus\n",
+        "FROM mvFactGenieTokenUsage WHERE usage_date>=:param.min AND usage_date<=:param.max\n"
+      ]
+    },
+    {
+      "name": "tk_product",
+      "display_name": "tk_product_mix",
+      "source_objects": [
+        "mvFactGenieTokenUsage"
+      ],
+      "pages": [
+        "Genie Token"
+      ],
+      "widget_ids": [
+        "152a01f7",
+        "1c212fa8"
+      ],
+      "required_fields": [
+        "genie_surface",
+        "sum(dbus)"
+      ],
+      "parameters": [
+        "param"
+      ],
+      "query_lines": [
+        "SELECT genie_surface, SUM(token_dbus) dbus, SUM(token_cost_usd) usd, COUNT(DISTINCT user_email) users\n",
+        "FROM mvFactGenieTokenUsage WHERE usage_date>=:param.min AND usage_date<=:param.max GROUP BY 1\n"
+      ]
+    },
+    {
+      "name": "tk_tier",
+      "display_name": "tk_tier",
+      "source_objects": [
+        "mvFactGenieTokenUsage"
+      ],
+      "pages": [
+        "Genie Token"
+      ],
+      "widget_ids": [
+        "1c212fa8",
+        "33fa88a6"
+      ],
+      "required_fields": [
+        "sum(dbus)",
+        "tier"
+      ],
+      "parameters": [
+        "param"
+      ],
+      "query_lines": [
+        "SELECT tier, SUM(token_dbus) dbus FROM mvFactGenieTokenUsage WHERE usage_date>=:param.min AND usage_date<=:param.max GROUP BY 1\n"
+      ]
+    },
+    {
+      "name": "tk_user",
+      "display_name": "tk_by_user",
+      "source_objects": [
+        "mvFactGenieTokenUsage"
+      ],
+      "pages": [
+        "Genie Token"
+      ],
+      "widget_ids": [
+        "1c212fa8",
+        "69763396"
+      ],
+      "required_fields": [
+        "dbus",
+        "user_email"
+      ],
+      "parameters": [
+        "param"
+      ],
+      "query_lines": [
+        "SELECT user_email, SUM(token_dbus) dbus, SUM(token_cost_usd) usd FROM mvFactGenieTokenUsage\n",
+        "WHERE usage_date>=:param.min AND usage_date<=:param.max GROUP BY 1 ORDER BY dbus DESC LIMIT 20\n"
+      ]
+    },
+    {
+      "name": "tk_channel",
+      "display_name": "tk_channel",
+      "source_objects": [
+        "mvFactGenieTokenUsage"
+      ],
+      "pages": [
+        "Genie Token"
+      ],
+      "widget_ids": [
+        "1c212fa8",
+        "df89b380"
+      ],
+      "required_fields": [
+        "genie_channel",
+        "sum(dbus)"
+      ],
+      "parameters": [
+        "param"
+      ],
+      "query_lines": [
+        "SELECT genie_channel, SUM(token_dbus) dbus FROM mvFactGenieTokenUsage WHERE usage_date>=:param.min AND usage_date<=:param.max GROUP BY 1\n"
+      ]
+    },
+    {
+      "name": "tk_trend",
+      "display_name": "tk_over_time_by_product",
+      "source_objects": [
+        "mvFactGenieTokenUsage"
+      ],
+      "pages": [
+        "Genie Token"
+      ],
+      "widget_ids": [
+        "1c212fa8",
+        "cfdf0d5d"
+      ],
+      "required_fields": [
+        "day",
+        "genie_surface",
+        "usd"
+      ],
+      "parameters": [
+        "param"
+      ],
+      "query_lines": [
+        "SELECT DATE_TRUNC('DAY',usage_date) day, genie_surface, SUM(token_cost_usd) usd, SUM(token_dbus) dbus\n",
+        "FROM mvFactGenieTokenUsage WHERE usage_date>=:param.min AND usage_date<=:param.max GROUP BY 1,2 ORDER BY 1\n"
+      ]
+    }
+  ]
+}

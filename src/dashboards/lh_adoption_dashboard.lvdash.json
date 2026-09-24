@@ -1,0 +1,7787 @@
+{
+ "datasets": [
+  {
+   "name": "e2b9e81f",
+   "displayName": "Dashboard_usage",
+   "queryLines": [
+    "SELECT\n",
+    "  `Dashboard ID` AS dashboard_id,\n",
+    "  CASE\n",
+    "    WHEN `Dashboard Name` RLIKE '.* [0-9]{4}-[0-9]{2}-[0-9]{2} .*' THEN 'unnamed_dashboard'\n",
+    "    ELSE `Dashboard Name`\n",
+    "  END AS dashboard_name,\n",
+    "  `View Date` AS viewed_date,\n",
+    "  `Workspace ID` AS workspace_id,\n",
+    "  `Workspace Name` AS workspace_name,\n",
+    "  MEASURE(`Dashboard Views`) AS num_views,\n",
+    "  MEASURE(`Draft Dashboard Views`) AS DraftDashboardViews,\n",
+    "  MEASURE(`Published Dashboard Views`) AS PublishedDashboardViews\n",
+    "FROM dashboard_adoption_metrics\n",
+    "GROUP BY ALL\n"
+   ]
+  },
+  {
+   "name": "a5510c39",
+   "displayName": "stale_dashboards",
+   "queryLines": [
+    "SELECT\n",
+    "  CASE\n",
+    "    WHEN `Dashboard Name` RLIKE '.* [0-9]{4}-[0-9]{2}-[0-9]{2} .*' THEN 'unnamed_dashboard'\n",
+    "    ELSE `Dashboard Name`\n",
+    "  END AS dashboard_name,\n",
+    "  MEASURE(`Dashboard Views`) AS num_views\n",
+    "FROM dashboard_adoption_metrics\n",
+    "WHERE `View Date` >= date_sub(current_date(), 14)\n",
+    "GROUP BY ALL\n",
+    "HAVING MEASURE(`Dashboard Views`) < 10\n"
+   ]
+  },
+  {
+   "name": "9d2c306d",
+   "displayName": "ranked_dashboards",
+   "queryLines": [
+    "WITH weekly_views AS (\n",
+    "  SELECT\n",
+    "    `Dashboard ID` AS dashboard_id,\n",
+    "    `Workspace ID` AS workspace_id,\n",
+    "    `Dashboard Name` AS dashboard_name,\n",
+    "    weekofyear(`View Date`) AS week_num,\n",
+    "    MEASURE(`Dashboard Views`) AS num_views\n",
+    "  FROM dashboard_adoption_metrics\n",
+    "  WHERE `View Date` >= current_date() - INTERVAL 21 DAYS\n",
+    "  GROUP BY ALL\n",
+    "),\n",
+    "weekly_ranks AS (\n",
+    "  SELECT *, DENSE_RANK() OVER (PARTITION BY week_num ORDER BY num_views DESC) AS week_rank\n",
+    "  FROM weekly_views\n",
+    "),\n",
+    "pivoted AS (\n",
+    "  SELECT\n",
+    "    dashboard_id,\n",
+    "    first(dashboard_name) AS dashboard_name,\n",
+    "    MAX(CASE WHEN week_num = weekofyear(current_date()) THEN num_views END) AS week_0_views,\n",
+    "    coalesce(MAX(CASE WHEN week_num = weekofyear(current_date() - INTERVAL 7 DAYS) THEN num_views END), 0) AS week_1_views,\n",
+    "    coalesce(MAX(CASE WHEN week_num = weekofyear(current_date() - INTERVAL 14 DAYS) THEN num_views END), 0) AS week_2_views,\n",
+    "    MAX(CASE WHEN week_num = weekofyear(current_date()) THEN week_rank END) AS week_0_rank,\n",
+    "    coalesce(MAX(CASE WHEN week_num = weekofyear(current_date() - INTERVAL 7 DAYS) THEN week_rank END), 999) AS week_1_rank,\n",
+    "    coalesce(MAX(CASE WHEN week_num = weekofyear(current_date() - INTERVAL 14 DAYS) THEN week_rank END), 999) AS week_2_rank,\n",
+    "    SUM(num_views) AS total_views\n",
+    "  FROM weekly_ranks\n",
+    "  GROUP BY dashboard_id\n",
+    "),\n",
+    "ranked AS (\n",
+    "  SELECT *, ROW_NUMBER() OVER (ORDER BY total_views DESC) AS overall_rank\n",
+    "  FROM pivoted\n",
+    ")\n",
+    "SELECT\n",
+    "  overall_rank,\n",
+    "  dashboard_name,\n",
+    "  dashboard_id,\n",
+    "  coalesce(week_0_views, week_1_views) AS this_week_views,\n",
+    "  coalesce(week_0_rank, week_1_rank) AS this_week_rank,\n",
+    "  week_1_views AS last_week_views,\n",
+    "  week_1_rank AS last_week_rank,\n",
+    "  week_2_views AS two_weeks_ago_views,\n",
+    "  week_2_rank AS two_weeks_ago_rank,\n",
+    "  this_week_rank - last_week_rank AS rank_change\n",
+    "FROM ranked\n",
+    "WHERE overall_rank <= 10 AND coalesce(week_0_rank, week_1_rank) < 999\n",
+    "ORDER BY overall_rank\n"
+   ]
+  },
+  {
+   "name": "51bbce62",
+   "displayName": "apps_user_access",
+   "queryLines": [
+    "SELECT\n",
+    "  `Activity Date` AS event_date,\n",
+    "  MEASURE(`Successful App Authentications`) AS user_login_events\n",
+    "FROM app_authentication_metrics\n",
+    "GROUP BY ALL\n",
+    "ORDER BY event_date DESC\n"
+   ]
+  },
+  {
+   "name": "0e741d6f",
+   "displayName": "apps_permission_changes",
+   "queryLines": [
+    "SELECT\n",
+    "  `Activity Date` AS event_date,\n",
+    "  `Workspace ID` AS workspace_id,\n",
+    "  `App ID` AS app,\n",
+    "  `Changed By` AS sharing_user,\n",
+    "  `Grantee` AS `acl_entry.user_name`,\n",
+    "  `Permission Level` AS `acl_entry.permission_level`,\n",
+    "  MEASURE(`Permission Changes`) AS permission_changes\n",
+    "FROM app_permission_metrics\n",
+    "GROUP BY ALL\n",
+    "ORDER BY event_date DESC\n"
+   ]
+  },
+  {
+   "name": "20c44dd1",
+   "displayName": "apps_actions",
+   "queryLines": [
+    "SELECT\n",
+    "  `Activity Date` AS event_date,\n",
+    "  `Action Name` AS action_name,\n",
+    "  MEASURE(`App Lifecycle Events`) AS actions\n",
+    "FROM app_activity_metrics\n",
+    "GROUP BY ALL\n",
+    "ORDER BY event_date DESC\n"
+   ]
+  },
+  {
+   "name": "255e661f",
+   "displayName": "apps_top_users",
+   "queryLines": [
+    "SELECT\n",
+    "  `Actor` AS email,\n",
+    "  MEASURE(`App Lifecycle Events`) AS action_count\n",
+    "FROM app_activity_metrics\n",
+    "GROUP BY ALL\n",
+    "ORDER BY action_count DESC\n",
+    "LIMIT 10\n"
+   ]
+  },
+  {
+   "name": "f8608a63",
+   "displayName": "dashboard_climbers_decliners",
+   "queryLines": [
+    "WITH monthly_views AS (\n",
+    "  SELECT\n",
+    "    `Dashboard ID` AS dashboard_id,\n",
+    "    `Dashboard Name` AS dashboard_name,\n",
+    "    `View Month` AS month,\n",
+    "    MEASURE(`Dashboard Views`) AS total_views\n",
+    "  FROM dashboard_adoption_metrics\n",
+    "  WHERE `View Date` >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL 1 MONTH\n",
+    "  GROUP BY ALL\n",
+    "),\n",
+    "pivoted AS (\n",
+    "  SELECT\n",
+    "    dashboard_name,\n",
+    "    MAX(CASE WHEN month = DATE_TRUNC('month', CURRENT_DATE) THEN total_views END) AS this_month_views,\n",
+    "    MAX(CASE WHEN month = DATE_TRUNC('month', CURRENT_DATE) - INTERVAL 1 MONTH THEN total_views END) AS last_month_views\n",
+    "  FROM monthly_views\n",
+    "  GROUP BY dashboard_name\n",
+    "),\n",
+    "diffs AS (\n",
+    "  SELECT dashboard_name, COALESCE(this_month_views, 0) - COALESCE(last_month_views, 0) AS view_diff\n",
+    "  FROM pivoted\n",
+    "),\n",
+    "ranked AS (\n",
+    "  SELECT\n",
+    "    dashboard_name,\n",
+    "    view_diff,\n",
+    "    CASE WHEN view_diff >= 0 THEN 'Climber' ELSE 'Decliner' END AS type,\n",
+    "    DENSE_RANK() OVER (PARTITION BY view_diff >= 0 ORDER BY abs(view_diff) DESC) AS rank\n",
+    "  FROM diffs\n",
+    ")\n",
+    "SELECT dashboard_name, view_diff, type, rank\n",
+    "FROM ranked\n",
+    "WHERE rank <= 20\n",
+    "ORDER BY type, rank\n"
+   ]
+  },
+  {
+   "name": "a19ba0f5",
+   "displayName": "apps_views",
+   "queryLines": [
+    "SELECT\n",
+    "  `App Name` AS app_name,\n",
+    "  `Workspace Name` AS workspace_name,\n",
+    "  MEASURE(`Unique App Users`) AS distinct_users,\n",
+    "  MEASURE(`App Lifecycle Events`) AS lifecycle_events\n",
+    "FROM app_activity_metrics\n",
+    "GROUP BY ALL\n"
+   ]
+  },
+  {
+   "name": "75376ae2",
+   "displayName": "uc_models",
+   "queryLines": [
+    "SELECT\n",
+    "  `Entity Name` AS entity_name,\n",
+    "  `Usage Date` AS usage_date,\n",
+    "  `Workspace Name` AS workspace_name,\n",
+    "  MEASURE(`Inference Requests`) AS request_count,\n",
+    "  MEASURE(`Input Tokens`) AS input_tokens,\n",
+    "  MEASURE(`Output Tokens`) AS output_tokens,\n",
+    "  MEASURE(`Serving DBUs`) AS dbus,\n",
+    "  MEASURE(`Serving Cost USD`) AS dollars\n",
+    "FROM\n",
+    "  serving_adoption_metrics\n",
+    "GROUP BY\n",
+    "  ALL"
+   ]
+  },
+  {
+   "name": "gspaces",
+   "displayName": "genie_space_filter",
+   "queryLines": [
+    "SELECT `Space ID` AS space_id, `Space Name` AS space_name\n",
+    "FROM genie_space_adoption_metrics\n",
+    "GROUP BY ALL\n"
+   ]
+  },
+  {
+   "name": "ov_kpi",
+   "displayName": "ov_kpi",
+   "queryLines": [
+    "WITH scorecard AS (\n",
+    "  SELECT\n",
+    "    MEASURE(`Active Genie Spaces`) AS active_spaces,\n",
+    "    MEASURE(`Questions`) AS questions,\n",
+    "    MEASURE(`Total Space Warehouse Cost USD`) AS warehouse_usd,\n",
+    "    MEASURE(`Genie Token Cost USD`) AS token_usd,\n",
+    "    MEASURE(`Genie Token DBUs`) AS token_dbus\n",
+    "  FROM genie_space_adoption_metrics\n",
+    "  WHERE `Activity Date` >= CAST(:param.min AS DATE)\n",
+    "    AND `Activity Date` <= CAST(:param.max AS DATE)\n",
+    "    AND (:space_id = 'ALL' OR `Space ID` = :space_id)\n",
+    "  GROUP BY ALL\n",
+    "),\n",
+    "people AS (\n",
+    "  SELECT MEASURE(`Unique Question Askers`) AS users\n",
+    "  FROM genie_conversation_metrics\n",
+    "  WHERE `Activity Date` >= CAST(:param.min AS DATE)\n",
+    "    AND `Activity Date` <= CAST(:param.max AS DATE)\n",
+    "    AND (:space_id = 'ALL' OR `Space ID` = :space_id)\n",
+    "  GROUP BY ALL\n",
+    ")\n",
+    "SELECT scorecard.*, people.users FROM scorecard CROSS JOIN people\n"
+   ],
+   "parameters": [
+    {
+     "displayName": "param",
+     "keyword": "param",
+     "dataType": "DATE",
+     "complexType": "RANGE",
+     "defaultSelection": {
+      "range": {
+       "dataType": "DATE",
+       "min": {
+        "value": "now-90d/d"
+       },
+       "max": {
+        "value": "now/d"
+       }
+      }
+     }
+    },
+    {
+     "displayName": "space_id",
+     "keyword": "space_id",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "ALL"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "ov_leaderboard",
+   "displayName": "ov_space_leaderboard",
+   "queryLines": [
+    "WITH scorecard AS (\n",
+    "  SELECT\n",
+    "    `Space ID` AS space_id,\n",
+    "    `Space Name` AS space_name,\n",
+    "    MEASURE(`Questions`) AS questions,\n",
+    "    MEASURE(`Space Opens`) AS views,\n",
+    "    MEASURE(`Positive Ratings`) AS positive,\n",
+    "    MEASURE(`Negative Ratings`) AS negative,\n",
+    "    MEASURE(`Total Space Warehouse Cost USD`) AS warehouse_usd,\n",
+    "    MEASURE(`Genie Token Cost USD`) AS token_usd\n",
+    "  FROM genie_space_adoption_metrics\n",
+    "  WHERE `Activity Date` >= CAST(:param.min AS DATE)\n",
+    "    AND `Activity Date` <= CAST(:param.max AS DATE)\n",
+    "    AND (:space_id = 'ALL' OR `Space ID` = :space_id)\n",
+    "  GROUP BY ALL\n",
+    "),\n",
+    "people AS (\n",
+    "  SELECT `Space ID` AS space_id, MEASURE(`Unique Question Askers`) AS users\n",
+    "  FROM genie_conversation_metrics\n",
+    "  WHERE `Activity Date` >= CAST(:param.min AS DATE)\n",
+    "    AND `Activity Date` <= CAST(:param.max AS DATE)\n",
+    "    AND (:space_id = 'ALL' OR `Space ID` = :space_id)\n",
+    "  GROUP BY ALL\n",
+    ")\n",
+    "SELECT s.*, COALESCE(p.users, 0) AS users\n",
+    "FROM scorecard s LEFT JOIN people p USING (space_id)\n"
+   ],
+   "parameters": [
+    {
+     "displayName": "param",
+     "keyword": "param",
+     "dataType": "DATE",
+     "complexType": "RANGE",
+     "defaultSelection": {
+      "range": {
+       "dataType": "DATE",
+       "min": {
+        "value": "now-90d/d"
+       },
+       "max": {
+        "value": "now/d"
+       }
+      }
+     }
+    },
+    {
+     "displayName": "space_id",
+     "keyword": "space_id",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "ALL"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "ov_trend",
+   "displayName": "ov_adoption_trend",
+   "queryLines": [
+    "SELECT `Activity Date` AS day, MEASURE(`Questions`) AS questions\n",
+    "FROM genie_conversation_metrics\n",
+    "WHERE `Activity Date` >= CAST(:param.min AS DATE)\n",
+    "  AND `Activity Date` <= CAST(:param.max AS DATE)\n",
+    "  AND (:space_id = 'ALL' OR `Space ID` = :space_id)\n",
+    "GROUP BY ALL\n",
+    "ORDER BY day\n"
+   ],
+   "parameters": [
+    {
+     "displayName": "param",
+     "keyword": "param",
+     "dataType": "DATE",
+     "complexType": "RANGE",
+     "defaultSelection": {
+      "range": {
+       "dataType": "DATE",
+       "min": {
+        "value": "now-90d/d"
+       },
+       "max": {
+        "value": "now/d"
+       }
+      }
+     }
+    },
+    {
+     "displayName": "space_id",
+     "keyword": "space_id",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "ALL"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "us_kpi",
+   "displayName": "us_kpi",
+   "queryLines": [
+    "WITH messages AS (\n",
+    "  SELECT\n",
+    "    MEASURE(`Questions`) AS questions,\n",
+    "    MEASURE(`Unique Question Askers`) AS users\n",
+    "  FROM genie_conversation_metrics\n",
+    "  WHERE `Activity Date` >= CAST(:param.min AS DATE)\n",
+    "    AND `Activity Date` <= CAST(:param.max AS DATE)\n",
+    "    AND (:space_id = 'ALL' OR `Space ID` = :space_id)\n",
+    "  GROUP BY ALL\n",
+    "),\n",
+    "by_conversation AS (\n",
+    "  SELECT `Conversation ID`, MEASURE(`Questions`) AS message_count\n",
+    "  FROM genie_conversation_metrics\n",
+    "  WHERE `Activity Date` >= CAST(:param.min AS DATE)\n",
+    "    AND `Activity Date` <= CAST(:param.max AS DATE)\n",
+    "    AND (:space_id = 'ALL' OR `Space ID` = :space_id)\n",
+    "  GROUP BY ALL\n",
+    "),\n",
+    "reach AS (\n",
+    "  SELECT MEASURE(`Space Opens`) AS views\n",
+    "  FROM genie_space_adoption_metrics\n",
+    "  WHERE `Activity Date` >= CAST(:param.min AS DATE)\n",
+    "    AND `Activity Date` <= CAST(:param.max AS DATE)\n",
+    "    AND (:space_id = 'ALL' OR `Space ID` = :space_id)\n",
+    "  GROUP BY ALL\n",
+    ")\n",
+    "SELECT\n",
+    "  messages.questions,\n",
+    "  messages.users,\n",
+    "  COALESCE(reach.views, 0) AS views,\n",
+    "  (SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY message_count) FROM by_conversation) AS median_msgs_per_conv\n",
+    "FROM messages CROSS JOIN reach\n"
+   ],
+   "parameters": [
+    {
+     "displayName": "param",
+     "keyword": "param",
+     "dataType": "DATE",
+     "complexType": "RANGE",
+     "defaultSelection": {
+      "range": {
+       "dataType": "DATE",
+       "min": {
+        "value": "now-90d/d"
+       },
+       "max": {
+        "value": "now/d"
+       }
+      }
+     }
+    },
+    {
+     "displayName": "space_id",
+     "keyword": "space_id",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "ALL"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "us_reach",
+   "displayName": "us_reach_vs_depth",
+   "queryLines": [
+    "SELECT\n",
+    "  `Space Name` AS space_name,\n",
+    "  MEASURE(`Space Opens`) AS views,\n",
+    "  MEASURE(`Questions`) AS questions\n",
+    "FROM genie_space_adoption_metrics\n",
+    "WHERE `Activity Date` >= CAST(:param.min AS DATE)\n",
+    "  AND `Activity Date` <= CAST(:param.max AS DATE)\n",
+    "  AND (:space_id = 'ALL' OR `Space ID` = :space_id)\n",
+    "GROUP BY ALL\n"
+   ],
+   "parameters": [
+    {
+     "displayName": "param",
+     "keyword": "param",
+     "dataType": "DATE",
+     "complexType": "RANGE",
+     "defaultSelection": {
+      "range": {
+       "dataType": "DATE",
+       "min": {
+        "value": "now-90d/d"
+       },
+       "max": {
+        "value": "now/d"
+       }
+      }
+     }
+    },
+    {
+     "displayName": "space_id",
+     "keyword": "space_id",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "ALL"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "us_trend",
+   "displayName": "us_questions_over_time",
+   "queryLines": [
+    "SELECT `Activity Date` AS day, MEASURE(`Questions`) AS questions\n",
+    "FROM genie_conversation_metrics\n",
+    "WHERE `Activity Date` >= CAST(:param.min AS DATE)\n",
+    "  AND `Activity Date` <= CAST(:param.max AS DATE)\n",
+    "  AND (:space_id = 'ALL' OR `Space ID` = :space_id)\n",
+    "GROUP BY ALL\n",
+    "ORDER BY day\n"
+   ],
+   "parameters": [
+    {
+     "displayName": "param",
+     "keyword": "param",
+     "dataType": "DATE",
+     "complexType": "RANGE",
+     "defaultSelection": {
+      "range": {
+       "dataType": "DATE",
+       "min": {
+        "value": "now-90d/d"
+       },
+       "max": {
+        "value": "now/d"
+       }
+      }
+     }
+    },
+    {
+     "displayName": "space_id",
+     "keyword": "space_id",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "ALL"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "us_feedback",
+   "displayName": "us_feedback_dist",
+   "queryLines": [
+    "SELECT\n",
+    "  `Space Name` AS space_name,\n",
+    "  `Feedback Rating` AS feedback_rating,\n",
+    "  MEASURE(`Questions`) AS messages\n",
+    "FROM genie_conversation_metrics\n",
+    "WHERE `Activity Date` >= CAST(:param.min AS DATE)\n",
+    "  AND `Activity Date` <= CAST(:param.max AS DATE)\n",
+    "  AND (:space_id = 'ALL' OR `Space ID` = :space_id)\n",
+    "GROUP BY ALL\n"
+   ],
+   "parameters": [
+    {
+     "displayName": "param",
+     "keyword": "param",
+     "dataType": "DATE",
+     "complexType": "RANGE",
+     "defaultSelection": {
+      "range": {
+       "dataType": "DATE",
+       "min": {
+        "value": "now-90d/d"
+       },
+       "max": {
+        "value": "now/d"
+       }
+      }
+     }
+    },
+    {
+     "displayName": "space_id",
+     "keyword": "space_id",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "ALL"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "us_comments",
+   "displayName": "us_comments",
+   "queryLines": [
+    "SELECT\n",
+    "  `Space Name` AS space_name,\n",
+    "  `Comment Text` AS comment_text,\n",
+    "  `Created At` AS created_timestamp,\n",
+    "  MEASURE(`Feedback Comments`) AS comments\n",
+    "FROM genie_feedback_metrics\n",
+    "WHERE `Activity Date` >= CAST(:param.min AS DATE)\n",
+    "  AND `Activity Date` <= CAST(:param.max AS DATE)\n",
+    "  AND (:space_id = 'ALL' OR `Space ID` = :space_id)\n",
+    "GROUP BY ALL\n",
+    "ORDER BY created_timestamp DESC\n"
+   ],
+   "parameters": [
+    {
+     "displayName": "param",
+     "keyword": "param",
+     "dataType": "DATE",
+     "complexType": "RANGE",
+     "defaultSelection": {
+      "range": {
+       "dataType": "DATE",
+       "min": {
+        "value": "now-90d/d"
+       },
+       "max": {
+        "value": "now/d"
+       }
+      }
+     }
+    },
+    {
+     "displayName": "space_id",
+     "keyword": "space_id",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "ALL"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "us_errors",
+   "displayName": "us_error_rate",
+   "queryLines": [
+    "SELECT\n",
+    "  `Space Name` AS space_name,\n",
+    "  MEASURE(`Questions`) AS total,\n",
+    "  MEASURE(`Questions with Errors`) AS errors\n",
+    "FROM genie_conversation_metrics\n",
+    "WHERE `Activity Date` >= CAST(:param.min AS DATE)\n",
+    "  AND `Activity Date` <= CAST(:param.max AS DATE)\n",
+    "  AND (:space_id = 'ALL' OR `Space ID` = :space_id)\n",
+    "GROUP BY ALL\n"
+   ],
+   "parameters": [
+    {
+     "displayName": "param",
+     "keyword": "param",
+     "dataType": "DATE",
+     "complexType": "RANGE",
+     "defaultSelection": {
+      "range": {
+       "dataType": "DATE",
+       "min": {
+        "value": "now-90d/d"
+       },
+       "max": {
+        "value": "now/d"
+       }
+      }
+     }
+    },
+    {
+     "displayName": "space_id",
+     "keyword": "space_id",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "ALL"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "us_topusers",
+   "displayName": "us_top_users",
+   "queryLines": [
+    "SELECT `User` AS user_email, MEASURE(`Questions`) AS questions\n",
+    "FROM genie_conversation_metrics\n",
+    "WHERE `Activity Date` >= CAST(:param.min AS DATE)\n",
+    "  AND `Activity Date` <= CAST(:param.max AS DATE)\n",
+    "  AND (:space_id = 'ALL' OR `Space ID` = :space_id)\n",
+    "GROUP BY ALL\n",
+    "ORDER BY questions DESC\n",
+    "LIMIT 15\n"
+   ],
+   "parameters": [
+    {
+     "displayName": "param",
+     "keyword": "param",
+     "dataType": "DATE",
+     "complexType": "RANGE",
+     "defaultSelection": {
+      "range": {
+       "dataType": "DATE",
+       "min": {
+        "value": "now-90d/d"
+       },
+       "max": {
+        "value": "now/d"
+       }
+      }
+     }
+    },
+    {
+     "displayName": "space_id",
+     "keyword": "space_id",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "ALL"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "co_kpi",
+   "displayName": "co_kpi",
+   "queryLines": [
+    "WITH scorecard AS (\n",
+    "  SELECT\n",
+    "    MEASURE(`Total Space Warehouse Cost USD`) AS warehouse_usd,\n",
+    "    MEASURE(`Genie Token Cost USD`) AS token_usd,\n",
+    "    MEASURE(`Questions`) AS questions\n",
+    "  FROM genie_space_adoption_metrics\n",
+    "  WHERE `Activity Date` >= CAST(:param.min AS DATE)\n",
+    "    AND `Activity Date` <= CAST(:param.max AS DATE)\n",
+    "    AND (:space_id = 'ALL' OR `Space ID` = :space_id)\n",
+    "  GROUP BY ALL\n",
+    ")\n",
+    "SELECT\n",
+    "  warehouse_usd,\n",
+    "  token_usd,\n",
+    "  COALESCE(TRY_DIVIDE(warehouse_usd, questions), 0) AS avg_wh_per_q\n",
+    "FROM scorecard\n"
+   ],
+   "parameters": [
+    {
+     "displayName": "param",
+     "keyword": "param",
+     "dataType": "DATE",
+     "complexType": "RANGE",
+     "defaultSelection": {
+      "range": {
+       "dataType": "DATE",
+       "min": {
+        "value": "now-90d/d"
+       },
+       "max": {
+        "value": "now/d"
+       }
+      }
+     }
+    },
+    {
+     "displayName": "space_id",
+     "keyword": "space_id",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "ALL"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "co_category",
+   "displayName": "co_cost_by_category",
+   "queryLines": [
+    "SELECT\n",
+    "  `Space Name` AS genie_space,\n",
+    "  `Cost Category` AS genie_cost_category,\n",
+    "  `Cost Class` AS genie_cost_class,\n",
+    "  MEASURE(`Genie Warehouse Cost USD`) AS cost_usd\n",
+    "FROM genie_warehouse_cost_metrics\n",
+    "WHERE `Activity Date` >= CAST(:param.min AS DATE)\n",
+    "  AND `Activity Date` <= CAST(:param.max AS DATE)\n",
+    "  AND (:space_id = 'ALL' OR `Space ID` = :space_id)\n",
+    "GROUP BY ALL\n"
+   ],
+   "parameters": [
+    {
+     "displayName": "param",
+     "keyword": "param",
+     "dataType": "DATE",
+     "complexType": "RANGE",
+     "defaultSelection": {
+      "range": {
+       "dataType": "DATE",
+       "min": {
+        "value": "now-90d/d"
+       },
+       "max": {
+        "value": "now/d"
+       }
+      }
+     }
+    },
+    {
+     "displayName": "space_id",
+     "keyword": "space_id",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "ALL"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "co_perq",
+   "displayName": "co_cost_per_question",
+   "queryLines": [
+    "SELECT\n",
+    "  `Space Name` AS space_name,\n",
+    "  `Message ID` AS question,\n",
+    "  MEASURE(`Message Statements`) AS num_statements,\n",
+    "  MEASURE(`Message Warehouse Cost USD`) AS cost_usd\n",
+    "FROM genie_message_cost_metrics\n",
+    "WHERE `Activity Date` >= CAST(:param.min AS DATE)\n",
+    "  AND `Activity Date` <= CAST(:param.max AS DATE)\n",
+    "  AND (:space_id = 'ALL' OR `Space ID` = :space_id)\n",
+    "GROUP BY ALL\n",
+    "ORDER BY cost_usd DESC\n",
+    "LIMIT 25\n"
+   ],
+   "parameters": [
+    {
+     "displayName": "param",
+     "keyword": "param",
+     "dataType": "DATE",
+     "complexType": "RANGE",
+     "defaultSelection": {
+      "range": {
+       "dataType": "DATE",
+       "min": {
+        "value": "now-90d/d"
+       },
+       "max": {
+        "value": "now/d"
+       }
+      }
+     }
+    },
+    {
+     "displayName": "space_id",
+     "keyword": "space_id",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "ALL"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "co_token",
+   "displayName": "co_token_by_space",
+   "queryLines": [
+    "SELECT\n",
+    "  `Space Name` AS space_name,\n",
+    "  MEASURE(`Genie Token DBUs`) AS token_dbus,\n",
+    "  MEASURE(`Genie Token Cost USD`) AS token_usd\n",
+    "FROM genie_token_cost_metrics\n",
+    "WHERE `Genie Surface` = 'GENIE_AGENTS'\n",
+    "  AND `Space Name` IS NOT NULL\n",
+    "  AND `Usage Date` >= CAST(:param.min AS DATE)\n",
+    "  AND `Usage Date` <= CAST(:param.max AS DATE)\n",
+    "  AND (:space_id = 'ALL' OR `Space ID` = :space_id)\n",
+    "GROUP BY ALL\n",
+    "ORDER BY token_dbus DESC\n"
+   ],
+   "parameters": [
+    {
+     "displayName": "param",
+     "keyword": "param",
+     "dataType": "DATE",
+     "complexType": "RANGE",
+     "defaultSelection": {
+      "range": {
+       "dataType": "DATE",
+       "min": {
+        "value": "now-90d/d"
+       },
+       "max": {
+        "value": "now/d"
+       }
+      }
+     }
+    },
+    {
+     "displayName": "space_id",
+     "keyword": "space_id",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "ALL"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "tk_kpi",
+   "displayName": "tk_kpi",
+   "queryLines": [
+    "SELECT\n",
+    "  MEASURE(`Genie Token DBUs`) AS dbus,\n",
+    "  MEASURE(`Genie Token Cost USD`) AS usd,\n",
+    "  MEASURE(`Free Token DBUs`) AS free_dbus,\n",
+    "  MEASURE(`Paid Token DBUs`) AS paid_dbus\n",
+    "FROM genie_token_cost_metrics\n",
+    "WHERE `Usage Date` >= CAST(:param.min AS DATE) AND `Usage Date` <= CAST(:param.max AS DATE)\n",
+    "GROUP BY ALL\n"
+   ],
+   "parameters": [
+    {
+     "displayName": "param",
+     "keyword": "param",
+     "dataType": "DATE",
+     "complexType": "RANGE",
+     "defaultSelection": {
+      "range": {
+       "dataType": "DATE",
+       "min": {
+        "value": "now-90d/d"
+       },
+       "max": {
+        "value": "now/d"
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "tk_product",
+   "displayName": "tk_product_mix",
+   "queryLines": [
+    "SELECT\n",
+    "  `Genie Surface` AS genie_surface,\n",
+    "  MEASURE(`Genie Token DBUs`) AS dbus,\n",
+    "  MEASURE(`Genie Token Cost USD`) AS usd,\n",
+    "  MEASURE(`Active Token Users`) AS users\n",
+    "FROM genie_token_cost_metrics\n",
+    "WHERE `Usage Date` >= CAST(:param.min AS DATE) AND `Usage Date` <= CAST(:param.max AS DATE)\n",
+    "GROUP BY ALL\n"
+   ],
+   "parameters": [
+    {
+     "displayName": "param",
+     "keyword": "param",
+     "dataType": "DATE",
+     "complexType": "RANGE",
+     "defaultSelection": {
+      "range": {
+       "dataType": "DATE",
+       "min": {
+        "value": "now-90d/d"
+       },
+       "max": {
+        "value": "now/d"
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "tk_tier",
+   "displayName": "tk_tier",
+   "queryLines": [
+    "SELECT `Tier` AS tier, MEASURE(`Genie Token DBUs`) AS dbus\n",
+    "FROM genie_token_cost_metrics\n",
+    "WHERE `Usage Date` >= CAST(:param.min AS DATE) AND `Usage Date` <= CAST(:param.max AS DATE)\n",
+    "GROUP BY ALL\n"
+   ],
+   "parameters": [
+    {
+     "displayName": "param",
+     "keyword": "param",
+     "dataType": "DATE",
+     "complexType": "RANGE",
+     "defaultSelection": {
+      "range": {
+       "dataType": "DATE",
+       "min": {
+        "value": "now-90d/d"
+       },
+       "max": {
+        "value": "now/d"
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "tk_user",
+   "displayName": "tk_by_user",
+   "queryLines": [
+    "SELECT\n",
+    "  `User` AS user_email,\n",
+    "  MEASURE(`Genie Token DBUs`) AS dbus,\n",
+    "  MEASURE(`Genie Token Cost USD`) AS usd\n",
+    "FROM genie_token_cost_metrics\n",
+    "WHERE `Usage Date` >= CAST(:param.min AS DATE) AND `Usage Date` <= CAST(:param.max AS DATE)\n",
+    "GROUP BY ALL\n",
+    "ORDER BY dbus DESC\n",
+    "LIMIT 20\n"
+   ],
+   "parameters": [
+    {
+     "displayName": "param",
+     "keyword": "param",
+     "dataType": "DATE",
+     "complexType": "RANGE",
+     "defaultSelection": {
+      "range": {
+       "dataType": "DATE",
+       "min": {
+        "value": "now-90d/d"
+       },
+       "max": {
+        "value": "now/d"
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "tk_channel",
+   "displayName": "tk_channel",
+   "queryLines": [
+    "SELECT `Genie Channel` AS genie_channel, MEASURE(`Genie Token DBUs`) AS dbus\n",
+    "FROM genie_token_cost_metrics\n",
+    "WHERE `Usage Date` >= CAST(:param.min AS DATE) AND `Usage Date` <= CAST(:param.max AS DATE)\n",
+    "GROUP BY ALL\n"
+   ],
+   "parameters": [
+    {
+     "displayName": "param",
+     "keyword": "param",
+     "dataType": "DATE",
+     "complexType": "RANGE",
+     "defaultSelection": {
+      "range": {
+       "dataType": "DATE",
+       "min": {
+        "value": "now-90d/d"
+       },
+       "max": {
+        "value": "now/d"
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "tk_trend",
+   "displayName": "tk_over_time_by_product",
+   "queryLines": [
+    "SELECT\n",
+    "  `Usage Date` AS day,\n",
+    "  `Genie Surface` AS genie_surface,\n",
+    "  MEASURE(`Genie Token Cost USD`) AS usd,\n",
+    "  MEASURE(`Genie Token DBUs`) AS dbus\n",
+    "FROM genie_token_cost_metrics\n",
+    "WHERE `Usage Date` >= CAST(:param.min AS DATE) AND `Usage Date` <= CAST(:param.max AS DATE)\n",
+    "GROUP BY ALL\n",
+    "ORDER BY day\n"
+   ],
+   "parameters": [
+    {
+     "displayName": "param",
+     "keyword": "param",
+     "dataType": "DATE",
+     "complexType": "RANGE",
+     "defaultSelection": {
+      "range": {
+       "dataType": "DATE",
+       "min": {
+        "value": "now-90d/d"
+       },
+       "max": {
+        "value": "now/d"
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "vs_usage",
+   "displayName": "vector_search_usage",
+   "queryLines": [
+    "SELECT\n",
+    "  `Endpoint Name` AS endpoint_name,\n",
+    "  `SKU Name` AS sku_name,\n",
+    "  `Usage Date` AS usage_date,\n",
+    "  `Workspace Name` AS workspace_name,\n",
+    "  `Attribution Status` AS attribution_status,\n",
+    "  MEASURE(`Vector Search DBUs`) AS dbus,\n",
+    "  MEASURE(`Vector Search Cost USD`) AS dollars\n",
+    "FROM vector_search_cost_metrics\n",
+    "GROUP BY ALL\n"
+   ]
+  }
+ ],
+ "relationshipGraphs": [
+  {
+   "sources": [
+    {
+     "name": "Dashboard_usage",
+     "datasetName": "e2b9e81f"
+    },
+    {
+     "name": "stale_dashboards",
+     "datasetName": "a5510c39"
+    },
+    {
+     "name": "apps_user_access",
+     "datasetName": "51bbce62"
+    },
+    {
+     "name": "ranked_dashboards",
+     "datasetName": "9d2c306d"
+    },
+    {
+     "name": "apps_permission_changes",
+     "datasetName": "0e741d6f"
+    },
+    {
+     "name": "apps_actions",
+     "datasetName": "20c44dd1"
+    },
+    {
+     "name": "apps_top_users",
+     "datasetName": "255e661f"
+    },
+    {
+     "name": "dashboard_climbers_decliners",
+     "datasetName": "f8608a63"
+    },
+    {
+     "name": "uc_models",
+     "datasetName": "75376ae2"
+    },
+    {
+     "name": "apps_views",
+     "datasetName": "a19ba0f5"
+    },
+    {
+     "name": "genie_space_filter",
+     "datasetName": "gspaces"
+    },
+    {
+     "name": "ov_space_leaderboard",
+     "datasetName": "ov_leaderboard"
+    },
+    {
+     "name": "ov_kpi",
+     "datasetName": "ov_kpi"
+    },
+    {
+     "name": "ov_adoption_trend",
+     "datasetName": "ov_trend"
+    },
+    {
+     "name": "us_kpi",
+     "datasetName": "us_kpi"
+    },
+    {
+     "name": "us_questions_over_time",
+     "datasetName": "us_trend"
+    },
+    {
+     "name": "us_reach_vs_depth",
+     "datasetName": "us_reach"
+    },
+    {
+     "name": "us_feedback_dist",
+     "datasetName": "us_feedback"
+    },
+    {
+     "name": "us_error_rate",
+     "datasetName": "us_errors"
+    },
+    {
+     "name": "us_comments",
+     "datasetName": "us_comments"
+    },
+    {
+     "name": "co_kpi",
+     "datasetName": "co_kpi"
+    },
+    {
+     "name": "us_top_users",
+     "datasetName": "us_topusers"
+    },
+    {
+     "name": "co_cost_by_category",
+     "datasetName": "co_category"
+    },
+    {
+     "name": "co_cost_per_question",
+     "datasetName": "co_perq"
+    },
+    {
+     "name": "co_token_by_space",
+     "datasetName": "co_token"
+    },
+    {
+     "name": "tk_kpi",
+     "datasetName": "tk_kpi"
+    },
+    {
+     "name": "tk_product_mix",
+     "datasetName": "tk_product"
+    },
+    {
+     "name": "tk_tier",
+     "datasetName": "tk_tier"
+    },
+    {
+     "name": "tk_by_user",
+     "datasetName": "tk_user"
+    },
+    {
+     "name": "tk_channel",
+     "datasetName": "tk_channel"
+    },
+    {
+     "name": "tk_over_time_by_product",
+     "datasetName": "tk_trend"
+    },
+    {
+     "name": "vector_search_usage",
+     "datasetName": "vs_usage"
+    }
+   ],
+   "relationships": [
+    {
+     "name": "relationship_0",
+     "from": "Dashboard_usage",
+     "to": "stale_dashboards",
+     "on": "`Dashboard_usage`.`dashboard_name` = `stale_dashboards`.`dashboard_name`",
+     "cardinality": "CARDINALITY_ONE_TO_MANY"
+    },
+    {
+     "name": "relationship_1",
+     "from": "Dashboard_usage",
+     "to": "dashboard_climbers_decliners",
+     "on": "`Dashboard_usage`.`dashboard_name` = `dashboard_climbers_decliners`.`dashboard_name`",
+     "cardinality": "CARDINALITY_ONE_TO_MANY"
+    },
+    {
+     "name": "relationship_2",
+     "from": "Dashboard_usage",
+     "to": "ranked_dashboards",
+     "on": "`Dashboard_usage`.`dashboard_name` = `ranked_dashboards`.`dashboard_name`",
+     "cardinality": "CARDINALITY_ONE_TO_MANY"
+    }
+   ],
+   "measureExpressions": [
+    {
+     "name": "satisfaction_rate",
+     "expression": "SUM(CASE WHEN `us_feedback_dist`.`feedback_rating` = 'POSITIVE' THEN `us_feedback_dist`.`messages` ELSE 0 END) * 1.0 / NULLIF(SUM(CASE WHEN `us_feedback_dist`.`feedback_rating` IN ('POSITIVE', 'NEGATIVE') THEN `us_feedback_dist`.`messages` ELSE 0 END), 0)"
+    }
+   ]
+  }
+ ],
+ "pages": [
+  {
+   "name": "1d47bc2c",
+   "displayName": "Dashboards",
+   "layout": [
+    {
+     "widget": {
+      "name": "b47771ce",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "Dashboard_usage__workspace_name",
+           "expression": "`Dashboard_usage`.`workspace_name`"
+          },
+          {
+           "name": "daily(Dashboard_usage__viewed_date)",
+           "expression": "DATE_TRUNC(\"DAY\", `Dashboard_usage`.`viewed_date`)"
+          },
+          {
+           "name": "sum(Dashboard_usage__num_views)",
+           "expression": "SUM(`Dashboard_usage`.`num_views`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Daily views by workspace",
+         "fields": []
+        }
+       },
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "daily(Dashboard_usage__viewed_date)",
+         "axis": {
+          "title": "Viewed Date",
+          "hideTitle": true
+         },
+         "displayName": "viewed_date",
+         "scale": {
+          "type": "temporal"
+         }
+        },
+        "y": {
+         "fieldName": "sum(Dashboard_usage__num_views)",
+         "axis": {
+          "title": "Views By Workspace",
+          "hideTitle": true
+         },
+         "displayName": "Views by workspace",
+         "scale": {
+          "type": "quantitative"
+         }
+        },
+        "color": {
+         "fieldName": "Dashboard_usage__workspace_name",
+         "legend": {
+          "position": "top"
+         },
+         "displayName": "workspace_name",
+         "scale": {
+          "type": "categorical"
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 7,
+      "width": 3,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "c7bcec3c",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "e2b9e81f",
+         "fields": [
+          {
+           "name": "sum(num_views)",
+           "expression": "SUM(`num_views`)"
+          }
+         ],
+         "filters": [
+          {
+           "expression": "`workspace_name` IN (`workspace_name`) OR TRUE"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "sum(num_views)",
+         "displayName": "Sum of num_views"
+        }
+       },
+       "frame": {
+        "title": "Total Views",
+        "showTitle": true,
+        "showDescription": true,
+        "description": "How many times have your dashboards been viewed?"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 5,
+      "width": 2,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "51f97bbd",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "e2b9e81f",
+         "fields": [
+          {
+           "name": "countdistinct(dashboard_id)",
+           "expression": "COUNT(DISTINCT `dashboard_id`)"
+          }
+         ],
+         "filters": [
+          {
+           "expression": "`workspace_name` IN (`workspace_name`) OR TRUE"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "countdistinct(dashboard_id)",
+         "format": {
+          "type": "number-plain",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 2
+          }
+         },
+         "displayName": "Count of Unique dashboard_id"
+        }
+       },
+       "frame": {
+        "title": "Unique dashboards",
+        "showTitle": true,
+        "showDescription": false,
+        "description": ""
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 2,
+      "width": 1,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "03f739a1",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "a5510c39",
+         "fields": [
+          {
+           "name": "countdistinct(dashboard_name)",
+           "expression": "COUNT(DISTINCT `dashboard_name`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "countdistinct(dashboard_name)",
+         "displayName": "Count of Unique dashboard_name"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Stale dashboards",
+        "showDescription": true,
+        "description": "Low recent viewership"
+       }
+      }
+     },
+     "position": {
+      "x": 1,
+      "y": 2,
+      "width": 1,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "e72aaa21",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "ranked_dashboards__dashboard_name",
+           "expression": "`ranked_dashboards`.`dashboard_name`"
+          },
+          {
+           "name": "max(ranked_dashboards__last_week_views)",
+           "expression": "MAX(`ranked_dashboards`.`last_week_views`)"
+          },
+          {
+           "name": "max(ranked_dashboards__this_week_views)",
+           "expression": "MAX(`ranked_dashboards`.`this_week_views`)"
+          },
+          {
+           "name": "min(ranked_dashboards__overall_rank)",
+           "expression": "MIN(`ranked_dashboards`.`overall_rank`)"
+          },
+          {
+           "name": "max(ranked_dashboards__rank_change)",
+           "expression": "MAX(`ranked_dashboards`.`rank_change`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "showDescription": true,
+        "title": {
+         "value": "This weeks top 10",
+         "fields": []
+        },
+        "description": {
+         "value": "Looking at views and change in rank",
+         "fields": []
+        }
+       },
+       "version": 2,
+       "rowsPerPage": 25,
+       "displayRowNumbers": false,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "ranked_dashboards__dashboard_name",
+          "useForSearch": false,
+          "displayName": "Dashboard Name",
+          "actions": {
+           "hover": {
+            "type": "tooltip",
+            "tooltipTemplate": "{{ @ }}"
+           }
+          },
+          "style": {
+           "type": "basic",
+           "rules": [
+            {
+             "condition": {
+              "operand": {
+               "type": "data-value",
+               "value": "0"
+              },
+              "operator": ">",
+              "fieldName": "max(ranked_dashboards__rank_change)"
+             },
+             "foregroundColor": {
+              "themeColorType": "visualizationColors",
+              "position": 4
+             }
+            },
+            {
+             "condition": {
+              "operand": {
+               "type": "data-value",
+               "value": "0"
+              },
+              "operator": "<",
+              "fieldName": "max(ranked_dashboards__rank_change)"
+             },
+             "foregroundColor": {
+              "themeColorType": "visualizationColors",
+              "position": 8
+             }
+            }
+           ]
+          }
+         },
+         {
+          "fieldName": "max(ranked_dashboards__last_week_views)",
+          "useForSearch": false,
+          "format": {
+           "type": "numeral.js",
+           "format": "0"
+          },
+          "displayName": "Last Week Views",
+          "actions": {
+           "hover": {
+            "type": "tooltip",
+            "tooltipTemplate": "{{ @ }}"
+           }
+          }
+         },
+         {
+          "fieldName": "max(ranked_dashboards__this_week_views)",
+          "useForSearch": false,
+          "format": {
+           "type": "numeral.js",
+           "format": "0"
+          },
+          "displayName": "This Week Views",
+          "actions": {
+           "hover": {
+            "type": "tooltip",
+            "tooltipTemplate": "{{ @ }}"
+           }
+          }
+         },
+         {
+          "fieldName": "min(ranked_dashboards__overall_rank)",
+          "useForSearch": false,
+          "format": {
+           "type": "numeral.js",
+           "format": "0"
+          },
+          "displayName": "Position",
+          "actions": {
+           "hover": {
+            "type": "tooltip",
+            "tooltipTemplate": "{{ @ }}"
+           }
+          }
+         }
+        ]
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 2,
+      "width": 4,
+      "height": 5
+     }
+    },
+    {
+     "widget": {
+      "name": "c3a2d6ef",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "weekly(Dashboard_usage__viewed_date)",
+           "expression": "DATE_TRUNC(\"WEEK\", `Dashboard_usage`.`viewed_date`)"
+          },
+          {
+           "name": "sum(Dashboard_usage__num_views)",
+           "expression": "SUM(`Dashboard_usage`.`num_views`)"
+          },
+          {
+           "name": "countdistinct(Dashboard_usage__dashboard_name)",
+           "expression": "COUNT(DISTINCT `Dashboard_usage`.`dashboard_name`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Weekly view trends",
+         "fields": []
+        }
+       },
+       "version": 1,
+       "mark": {
+        "colors": [
+         {
+          "themeColorType": "visualizationColors",
+          "position": 3
+         },
+         {
+          "themeColorType": "visualizationColors",
+          "position": 10
+         },
+         {
+          "themeColorType": "visualizationColors",
+          "position": 3
+         },
+         {
+          "themeColorType": "visualizationColors",
+          "position": 4
+         },
+         {
+          "themeColorType": "visualizationColors",
+          "position": 5
+         },
+         {
+          "themeColorType": "visualizationColors",
+          "position": 6
+         },
+         {
+          "themeColorType": "visualizationColors",
+          "position": 7
+         },
+         {
+          "themeColorType": "visualizationColors",
+          "position": 8
+         },
+         {
+          "themeColorType": "visualizationColors",
+          "position": 9
+         },
+         {
+          "themeColorType": "visualizationColors",
+          "position": 10
+         }
+        ]
+       },
+       "widgetType": "combo",
+       "encodings": {
+        "x": {
+         "fieldName": "weekly(Dashboard_usage__viewed_date)",
+         "axis": {
+          "hideTitle": true
+         },
+         "displayName": "viewed_date",
+         "scale": {
+          "type": "temporal"
+         }
+        },
+        "label": {
+         "show": false
+        },
+        "color": {
+         "legend": {
+          "position": "top",
+          "hide": false
+         }
+        },
+        "y": {
+         "primary": {
+          "fields": [
+           {
+            "fieldName": "sum(Dashboard_usage__num_views)",
+            "displayName": "Total views"
+           }
+          ],
+          "scale": {
+           "type": "quantitative"
+          },
+          "axis": {
+           "hideTitle": true
+          }
+         },
+         "secondary": {
+          "fields": [
+           {
+            "fieldName": "countdistinct(Dashboard_usage__dashboard_name)",
+            "displayName": "Unique dashboards"
+           }
+          ],
+          "scale": {
+           "type": "quantitative",
+           "reverse": false
+          },
+          "axis": {
+           "hideLabels": false,
+           "hideTitle": false
+          }
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 3,
+      "y": 7,
+      "width": 3,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "394c39ff",
+      "multilineTextboxSpec": {
+       "lines": [
+        "#### <span style=\"font-size: 14px;\">Got suggestions or having trouble? Raise a github issue or send </span>[<span style=\"font-size: 14px;\">Feedback here!</span>](mailto:sam.lecorre+adoption_dash@databricks.com;mike.dobing+adoption_dash@databricks.com)"
+       ]
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 0,
+      "width": 4,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "climbers-over-last-month",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "dashboard_climbers_decliners__type",
+           "expression": "`dashboard_climbers_decliners`.`type`"
+          },
+          {
+           "name": "dashboard_climbers_decliners__view_diff",
+           "expression": "`dashboard_climbers_decliners`.`view_diff`"
+          },
+          {
+           "name": "dashboard_climbers_decliners__dashboard_name",
+           "expression": "`dashboard_climbers_decliners`.`dashboard_name`"
+          }
+         ],
+         "filters": [
+          {
+           "expression": "`dashboard_climbers_decliners`.`type` IN ('Climber')"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Climbers over the last month",
+         "fields": []
+        }
+       },
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "dashboard_climbers_decliners__view_diff",
+         "displayName": "Change in views",
+         "scale": {
+          "type": "quantitative",
+          "fn": {
+           "type": "symlog"
+          }
+         }
+        },
+        "y": {
+         "fieldName": "dashboard_climbers_decliners__dashboard_name",
+         "displayName": "Dashboard Name",
+         "scale": {
+          "type": "categorical",
+          "categorySize": {
+           "type": "number-of-categories",
+           "number": 20
+          },
+          "sort": {
+           "by": "x-reversed"
+          }
+         }
+        },
+        "color": {
+         "fieldName": "dashboard_climbers_decliners__type",
+         "scale": {
+          "type": "categorical",
+          "mappings": [
+           {
+            "value": "Decliner",
+            "color": {
+             "themeColorType": "visualizationColors",
+             "position": 2
+            }
+           },
+           {
+            "value": "Climber",
+            "color": {
+             "themeColorType": "visualizationColors",
+             "position": 3
+            }
+           }
+          ]
+         }
+        },
+        "label": {
+         "show": false,
+         "showTotal": true
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 3,
+      "y": 13,
+      "width": 3,
+      "height": 9
+     }
+    },
+    {
+     "widget": {
+      "name": "decliners-over-last-month",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "dashboard_climbers_decliners__type",
+           "expression": "`dashboard_climbers_decliners`.`type`"
+          },
+          {
+           "name": "dashboard_climbers_decliners__view_diff",
+           "expression": "`dashboard_climbers_decliners`.`view_diff`"
+          },
+          {
+           "name": "dashboard_climbers_decliners__dashboard_name",
+           "expression": "`dashboard_climbers_decliners`.`dashboard_name`"
+          }
+         ],
+         "filters": [
+          {
+           "expression": "`dashboard_climbers_decliners`.`type` IN ('Decliner')"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Decliners over the last month",
+         "fields": []
+        }
+       },
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "dashboard_climbers_decliners__view_diff",
+         "displayName": "Change in views",
+         "scale": {
+          "type": "quantitative",
+          "fn": {
+           "type": "symlog"
+          }
+         }
+        },
+        "y": {
+         "fieldName": "dashboard_climbers_decliners__dashboard_name",
+         "displayName": "Dashboard Name",
+         "scale": {
+          "type": "categorical",
+          "categorySize": {
+           "type": "number-of-categories",
+           "number": 20
+          },
+          "sort": {
+           "by": "x-reversed"
+          }
+         }
+        },
+        "color": {
+         "fieldName": "dashboard_climbers_decliners__type",
+         "scale": {
+          "type": "categorical",
+          "mappings": [
+           {
+            "value": "Decliner",
+            "color": {
+             "themeColorType": "visualizationColors",
+             "position": 7
+            }
+           },
+           {
+            "value": "Climber",
+            "color": {
+             "themeColorType": "visualizationColors",
+             "position": 3
+            }
+           }
+          ]
+         }
+        },
+        "label": {
+         "show": false,
+         "showTotal": true
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 13,
+      "width": 3,
+      "height": 9
+     }
+    },
+    {
+     "widget": {
+      "name": "dashboard-name",
+      "queries": [
+       {
+        "name": "dashboards/01f0d06b1d7911588e7e0edddb3ab647/datasets/01f0d0f4037b1182afc9c6531fcee276_dashboard_name",
+        "query": {
+         "datasetName": "e2b9e81f",
+         "fields": [
+          {
+           "name": "dashboard_name",
+           "expression": "`dashboard_name`"
+          },
+          {
+           "name": "dashboard_name_associativity",
+           "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "dashboards/01f0d06b1d7911588e7e0edddb3ab647/datasets/01f0d0f4037b11cdb0a2091b32ece092_dashboard_name",
+        "query": {
+         "datasetName": "a5510c39",
+         "fields": [
+          {
+           "name": "dashboard_name",
+           "expression": "`dashboard_name`"
+          },
+          {
+           "name": "dashboard_name_associativity",
+           "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "dashboards/01f0d06b1d7911588e7e0edddb3ab647/datasets/01f0d0f4037b12149691c055623e847d_dashboard_name",
+        "query": {
+         "datasetName": "f8608a63",
+         "fields": [
+          {
+           "name": "dashboard_name",
+           "expression": "`dashboard_name`"
+          },
+          {
+           "name": "dashboard_name_associativity",
+           "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "dashboards/01f0d06b1d7911588e7e0edddb3ab647/datasets/01f0d0f4037b11d6826997e540560b1d_dashboard_name",
+        "query": {
+         "datasetName": "9d2c306d",
+         "fields": [
+          {
+           "name": "dashboard_name",
+           "expression": "`dashboard_name`"
+          },
+          {
+           "name": "dashboard_name_associativity",
+           "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "dashboard_name",
+          "queryName": "dashboards/01f0d06b1d7911588e7e0edddb3ab647/datasets/01f0d0f4037b1182afc9c6531fcee276_dashboard_name"
+         },
+         {
+          "fieldName": "dashboard_name",
+          "queryName": "dashboards/01f0d06b1d7911588e7e0edddb3ab647/datasets/01f0d0f4037b11cdb0a2091b32ece092_dashboard_name"
+         },
+         {
+          "fieldName": "dashboard_name",
+          "queryName": "dashboards/01f0d06b1d7911588e7e0edddb3ab647/datasets/01f0d0f4037b12149691c055623e847d_dashboard_name"
+         },
+         {
+          "fieldName": "dashboard_name",
+          "queryName": "dashboards/01f0d06b1d7911588e7e0edddb3ab647/datasets/01f0d0f4037b11d6826997e540560b1d_dashboard_name"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Dashboard Name"
+       }
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 1,
+      "width": 4,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "821d5c9a",
+      "multilineTextboxSpec": {
+       "lines": [
+        "# AI/BI Dashboard Adoption"
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 2,
+      "height": 2
+     }
+    }
+   ],
+   "pageType": "PAGE_TYPE_CANVAS"
+  },
+  {
+   "name": "0319638f",
+   "displayName": "Apps",
+   "layout": [
+    {
+     "widget": {
+      "name": "96a8c8e5",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "monthly(apps_user_access__event_date)",
+           "expression": "DATE_TRUNC(\"MONTH\", `apps_user_access`.`event_date`)"
+          },
+          {
+           "name": "sum(apps_user_access__user_login_events)",
+           "expression": "SUM(`apps_user_access`.`user_login_events`)"
+          }
+         ],
+         "disaggregated": false,
+         "orders": [
+          {
+           "direction": "DESC",
+           "expression": "DATE_TRUNC(\"MONTH\", `apps_user_access`.`event_date`)"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Total user logins to apps",
+         "fields": []
+        }
+       },
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "sum(apps_user_access__user_login_events)",
+         "displayName": "Sum of user_login_events"
+        },
+        "period": {
+         "fieldName": "monthly(apps_user_access__event_date)"
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 1,
+      "width": 6,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "3ee58ea5",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "0e741d6f",
+         "fields": [
+          {
+           "name": "acl_entry.permission_level",
+           "expression": "`acl_entry.permission_level`"
+          },
+          {
+           "name": "monthly(event_date)",
+           "expression": "DATE_TRUNC(\"MONTH\", `event_date`)"
+          },
+          {
+           "name": "count(acl_entry.user_name)",
+           "expression": "COUNT(`acl_entry.user_name`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "line",
+       "encodings": {
+        "x": {
+         "fieldName": "monthly(event_date)",
+         "displayName": "Month",
+         "scale": {
+          "type": "temporal"
+         }
+        },
+        "y": {
+         "fieldName": "count(acl_entry.user_name)",
+         "axis": {
+          "hideTitle": true,
+          "hideLabels": true
+         },
+         "displayName": "Count of acl_entry.user_name",
+         "scale": {
+          "type": "quantitative"
+         }
+        },
+        "color": {
+         "fieldName": "acl_entry.permission_level",
+         "legend": {
+          "position": "bottom"
+         },
+         "displayName": "Permission level",
+         "scale": {
+          "type": "categorical"
+         }
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "App permission grants over time"
+       }
+      }
+     },
+     "position": {
+      "x": 6,
+      "y": 2,
+      "width": 6,
+      "height": 8
+     }
+    },
+    {
+     "widget": {
+      "name": "ec364792",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "20c44dd1",
+         "fields": [
+          {
+           "name": "action_name",
+           "expression": "`action_name`"
+          },
+          {
+           "name": "monthly(event_date)",
+           "expression": "DATE_TRUNC(\"MONTH\", `event_date`)"
+          },
+          {
+           "name": "sum(actions)",
+           "expression": "SUM(`actions`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "monthly(event_date)",
+         "displayName": "Month",
+         "scale": {
+          "type": "temporal"
+         }
+        },
+        "y": {
+         "fieldName": "sum(actions)",
+         "displayName": "Sum of actions",
+         "scale": {
+          "type": "quantitative"
+         }
+        },
+        "color": {
+         "fieldName": "action_name",
+         "displayName": "action_name",
+         "scale": {
+          "type": "categorical"
+         }
+        }
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 4,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "1a5ab142",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "255e661f",
+         "fields": [
+          {
+           "name": "sum(action_count)",
+           "expression": "SUM(`action_count`)"
+          },
+          {
+           "name": "email",
+           "expression": "`email`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "sum(action_count)",
+         "scale": {
+          "type": "quantitative"
+         },
+         "axis": {
+          "hideLabels": true,
+          "hideTitle": true
+         },
+         "displayName": "Sum of action_count"
+        },
+        "y": {
+         "fieldName": "email",
+         "scale": {
+          "type": "categorical",
+          "sort": {
+           "by": "x-reversed"
+          }
+         },
+         "axis": {
+          "hideTitle": true
+         },
+         "displayName": "email"
+        },
+        "label": {
+         "show": true
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Top users"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 10,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "top-apps-by-views",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "a19ba0f5",
+         "fields": [
+          {
+           "name": "sum(distinct_users)",
+           "expression": "SUM(`distinct_users`)"
+          },
+          {
+           "name": "app_name",
+           "expression": "`app_name`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "sum(distinct_users)",
+         "axis": {
+          "hideTitle": true
+         },
+         "scale": {
+          "type": "quantitative"
+         }
+        },
+        "y": {
+         "fieldName": "app_name",
+         "axis": {
+          "hideTitle": true
+         },
+         "scale": {
+          "type": "categorical",
+          "categorySize": {
+           "type": "number-of-categories",
+           "number": 20
+          },
+          "sort": {
+           "by": "x-reversed"
+          }
+         }
+        },
+        "label": {
+         "show": true
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Top apps by views"
+       }
+      }
+     },
+     "position": {
+      "x": 6,
+      "y": 10,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "application-name",
+      "queries": [
+       {
+        "name": "dashboards/01f0d05a59391ad087e297c5e9c9aed5/datasets/01f0d05da6581eaf9655caec7ea3b20b_app_name",
+        "query": {
+         "datasetName": "a19ba0f5",
+         "fields": [
+          {
+           "name": "app_name",
+           "expression": "`app_name`"
+          },
+          {
+           "name": "app_name_associativity",
+           "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "app_name",
+          "queryName": "dashboards/01f0d05a59391ad087e297c5e9c9aed5/datasets/01f0d05da6581eaf9655caec7ea3b20b_app_name"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Application Name"
+       }
+      }
+     },
+     "position": {
+      "x": 6,
+      "y": 1,
+      "width": 6,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "bf031742",
+      "multilineTextboxSpec": {
+       "lines": [
+        "# Apps adoption"
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 12,
+      "height": 1
+     }
+    }
+   ],
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layoutVersion": "GRID_V1"
+  },
+  {
+   "name": "475d4e3a",
+   "displayName": "Models",
+   "layout": [
+    {
+     "widget": {
+      "name": "models_header",
+      "multilineTextboxSpec": {
+       "lines": [
+        "# Model Serving Analytics"
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 12,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "models_filter",
+      "queries": [
+       {
+        "name": "dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a5b8e3d98a94c20fb4f_entity_name",
+        "query": {
+         "datasetName": "75376ae2",
+         "fields": [
+          {
+           "name": "entity_name",
+           "expression": "`entity_name`"
+          },
+          {
+           "name": "entity_name_associativity",
+           "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "frame": {
+        "showTitle": true,
+        "title": "Model Name"
+       },
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "entity_name",
+          "queryName": "dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a5b8e3d98a94c20fb4f_entity_name"
+         }
+        ]
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 1,
+      "width": 4,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "cnt_inferences",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "sum(uc_models__request_count)",
+           "expression": "SUM(`uc_models`.`request_count`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": "Total Inferences"
+       },
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "sum(uc_models__request_count)",
+         "format": {
+          "type": "number-plain",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 0
+          }
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 3,
+      "width": 3,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "cnt_cost",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "sum(uc_models__dollars)",
+           "expression": "SUM(`uc_models`.`dollars`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": "Serving Cost"
+       },
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "sum(uc_models__dollars)",
+         "format": {
+          "type": "number-currency",
+          "currencyCode": "USD",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 2
+          }
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 3,
+      "y": 3,
+      "width": 3,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "cnt_dbus",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "sum(uc_models__dbus)",
+           "expression": "SUM(`uc_models`.`dbus`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": "Serving DBUs"
+       },
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "sum(uc_models__dbus)",
+         "format": {
+          "type": "number-plain",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 1
+          }
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 6,
+      "y": 3,
+      "width": 3,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "cnt_tokens",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "sum(uc_models__input_tokens)",
+           "expression": "SUM(`uc_models`.`input_tokens`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "showDescription": true,
+        "title": "Total Tokens",
+        "description": {
+         "value": "Input + Output",
+         "fields": []
+        }
+       },
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "sum(uc_models__input_tokens)",
+         "format": {
+          "type": "number-plain",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 0
+          }
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 9,
+      "y": 3,
+      "width": 3,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "inference_trend",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "uc_models__workspace_name",
+           "expression": "`uc_models`.`workspace_name`"
+          },
+          {
+           "name": "uc_models__entity_name",
+           "expression": "`uc_models`.`entity_name`"
+          },
+          {
+           "name": "count(uc_models__*)",
+           "expression": "COUNT(STRUCT(`uc_models`.`*`))"
+          },
+          {
+           "name": "sum(uc_models__request_count)",
+           "expression": "SUM(`uc_models`.`request_count`)"
+          },
+          {
+           "name": "sum(uc_models__dollars)",
+           "expression": "SUM(`uc_models`.`dollars`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "showDescription": true,
+        "title": {
+         "value": "Cost and inference",
+         "fields": []
+        },
+        "description": {
+         "value": "Broken down by workspace, size is the count of occurences.",
+         "fields": []
+        }
+       },
+       "version": 3,
+       "widgetType": "scatter",
+       "encodings": {
+        "x": {
+         "fieldName": "sum(uc_models__request_count)",
+         "displayName": "Inferences",
+         "scale": {
+          "type": "quantitative"
+         }
+        },
+        "y": {
+         "fieldName": "sum(uc_models__dollars)",
+         "displayName": "Cost",
+         "scale": {
+          "type": "quantitative"
+         }
+        },
+        "color": {
+         "fieldName": "uc_models__workspace_name",
+         "scale": {
+          "type": "categorical"
+         }
+        },
+        "size": {
+         "fieldName": "count(uc_models__*)",
+         "scale": {
+          "type": "quantitative"
+         }
+        },
+        "extra": [
+         {
+          "fieldName": "uc_models__entity_name"
+         },
+         {
+          "fieldName": "uc_models__entity_name"
+         }
+        ]
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 6,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "cost_by_model",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "uc_models__workspace_name",
+           "expression": "`uc_models`.`workspace_name`"
+          },
+          {
+           "name": "sum(uc_models__dollars)",
+           "expression": "SUM(`uc_models`.`dollars`)"
+          },
+          {
+           "name": "uc_models__entity_name",
+           "expression": "`uc_models`.`entity_name`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Serving cost by model",
+         "fields": []
+        }
+       },
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "sum(uc_models__dollars)",
+         "displayName": "Cost (USD)",
+         "scale": {
+          "type": "quantitative"
+         }
+        },
+        "y": {
+         "fieldName": "uc_models__entity_name",
+         "displayName": "Model",
+         "scale": {
+          "type": "categorical",
+          "sort": {
+           "by": "x-reversed"
+          }
+         }
+        },
+        "color": {
+         "fieldName": "uc_models__workspace_name",
+         "scale": {
+          "type": "categorical"
+         }
+        },
+        "label": {
+         "show": false,
+         "showTotal": true
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 6,
+      "y": 6,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "cost_trend",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "monthly(uc_models__usage_date)",
+           "expression": "DATE_TRUNC(\"MONTH\", `uc_models`.`usage_date`)"
+          },
+          {
+           "name": "sum(uc_models__dollars)",
+           "expression": "SUM(`uc_models`.`dollars`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Serving cost over time",
+         "fields": []
+        }
+       },
+       "version": 3,
+       "mark": {
+        "lineShape": "smooth",
+        "marker": {
+         "shape": "circle"
+        },
+        "size": 0.6
+       },
+       "widgetType": "line",
+       "encodings": {
+        "x": {
+         "fieldName": "monthly(uc_models__usage_date)",
+         "displayName": "Month",
+         "scale": {
+          "type": "temporal"
+         }
+        },
+        "y": {
+         "fieldName": "sum(uc_models__dollars)",
+         "displayName": "Cost (USD)",
+         "scale": {
+          "type": "quantitative"
+         }
+        },
+        "label": {
+         "show": false
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 12,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "tokens_by_model",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "sum(uc_models__input_tokens)",
+           "expression": "SUM(`uc_models`.`input_tokens`)"
+          },
+          {
+           "name": "sum(uc_models__output_tokens)",
+           "expression": "SUM(`uc_models`.`output_tokens`)"
+          },
+          {
+           "name": "uc_models__entity_name",
+           "expression": "`uc_models`.`entity_name`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Token usage by model",
+         "fields": []
+        }
+       },
+       "version": 3,
+       "mark": {
+        "colors": [
+         null,
+         {
+          "themeColorType": "visualizationColors",
+          "position": 8
+         }
+        ]
+       },
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "scale": {
+          "type": "quantitative"
+         },
+         "fields": [
+          {
+           "fieldName": "sum(uc_models__input_tokens)",
+           "displayName": "Input Tokens"
+          },
+          {
+           "fieldName": "sum(uc_models__output_tokens)",
+           "displayName": "Output Tokens"
+          }
+         ]
+        },
+        "y": {
+         "fieldName": "uc_models__entity_name",
+         "displayName": "Model",
+         "scale": {
+          "type": "categorical",
+          "sort": {
+           "by": "x-reversed"
+          }
+         }
+        },
+        "label": {
+         "show": true
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 6,
+      "y": 12,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "4d845b00",
+      "queries": [
+       {
+        "name": "dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a5b8e3d98a94c20fb4f_input_tokens",
+        "query": {
+         "datasetName": "75376ae2",
+         "fields": [
+          {
+           "name": "min(input_tokens)",
+           "expression": "MIN(`input_tokens`)"
+          },
+          {
+           "name": "max(input_tokens)",
+           "expression": "MAX(`input_tokens`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "selection": {
+        "defaultSelection": {
+         "range": {
+          "dataType": "INTEGER",
+          "min": {
+           "value": "1"
+          },
+          "max": {
+           "value": ""
+          }
+         }
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "showDescription": true,
+        "title": {
+         "value": "Min Input Tokens",
+         "fields": []
+        },
+        "description": {
+         "value": "Filters the token usage stack ranking graphic",
+         "fields": []
+        }
+       },
+       "widgetType": "range-slider",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "input_tokens",
+          "queryName": "dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a5b8e3d98a94c20fb4f_input_tokens"
+         }
+        ]
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 1,
+      "width": 4,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "ac713208",
+      "queries": [
+       {
+        "name": "dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a5b8e3d98a94c20fb4f_dollars",
+        "query": {
+         "datasetName": "75376ae2",
+         "fields": [
+          {
+           "name": "min(dollars)",
+           "expression": "MIN(`dollars`)"
+          },
+          {
+           "name": "max(dollars)",
+           "expression": "MAX(`dollars`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "selection": {
+        "defaultSelection": {
+         "range": {
+          "dataType": "INTEGER",
+          "min": {
+           "value": "10"
+          },
+          "max": {
+           "value": ""
+          }
+         }
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "showDescription": true,
+        "title": {
+         "value": "Min Serving Cost ($)",
+         "fields": []
+        },
+        "description": {
+         "value": "Filters the cost stack ranking graphic for models",
+         "fields": []
+        }
+       },
+       "widgetType": "range-slider",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "dollars",
+          "queryName": "dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a5b8e3d98a94c20fb4f_dollars"
+         }
+        ]
+       }
+      }
+     },
+     "position": {
+      "x": 8,
+      "y": 1,
+      "width": 4,
+      "height": 2
+     }
+    }
+   ],
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layoutVersion": "GRID_V1"
+  },
+  {
+   "name": "85a97342",
+   "displayName": "Global Filters",
+   "layout": [
+    {
+     "widget": {
+      "name": "910fb9ea",
+      "queries": [
+       {
+        "name": "dashboards/01f09a0b6dde1972a0fc60aa3d4c7b0b/datasets/01f09a17823315d582947894a49feefb_workspace_name",
+        "query": {
+         "datasetName": "e2b9e81f",
+         "fields": [
+          {
+           "name": "workspace_name",
+           "expression": "`workspace_name`"
+          },
+          {
+           "name": "workspace_name_associativity",
+           "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "workspace_name",
+          "displayName": "workspace_name",
+          "queryName": "dashboards/01f09a0b6dde1972a0fc60aa3d4c7b0b/datasets/01f09a17823315d582947894a49feefb_workspace_name"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Workspace"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 1,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "ac69a7af",
+      "queries": [
+       {
+        "name": "dashboards/01f0be3f867a15ccb2cf8ac689352fd2/datasets/01f0be3fe986188b9d2af45f603c4b1c_daily(viewed_date)",
+        "query": {
+         "datasetName": "e2b9e81f",
+         "fields": [
+          {
+           "name": "daily(viewed_date)",
+           "expression": "DATE_TRUNC(\"DAY\", `viewed_date`)"
+          },
+          {
+           "name": "daily(viewed_date)_associativity",
+           "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-date-range-picker",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "daily(viewed_date)",
+          "queryName": "dashboards/01f0be3f867a15ccb2cf8ac689352fd2/datasets/01f0be3fe986188b9d2af45f603c4b1c_daily(viewed_date)"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Time period"
+       },
+       "selection": {
+        "defaultSelection": {
+         "range": {
+          "dataType": "DATETIME",
+          "min": {
+           "value": "2026-07-01T00:00:00.000"
+          },
+          "max": {
+           "value": "2026-12-31T23:59:59.999"
+          }
+         }
+        }
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 2,
+      "width": 1,
+      "height": 2
+     }
+    }
+   ],
+   "pageType": "PAGE_TYPE_GLOBAL_FILTERS"
+  },
+  {
+   "name": "950580dd",
+   "displayName": "Genie Space Overview",
+   "layout": [
+    {
+     "widget": {
+      "name": "e7c8fa94",
+      "multilineTextboxSpec": {
+       "lines": [
+        "\n",
+        "# Genie Space \u2014 Overview\n",
+        "Cost metrics (system tables) span all workspaces in this metastore; question/feedback metrics (Genie API) are limited to spaces this deployment can access. "
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 6,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "05627407",
+      "queries": [
+       {
+        "name": "parameter_950580dd/ov_kpi_dt",
+        "query": {
+         "datasetName": "ov_kpi",
+         "parameters": [
+          {
+           "name": "param",
+           "keyword": "param"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_950580dd/ov_leaderboard_dt",
+        "query": {
+         "datasetName": "ov_leaderboard",
+         "parameters": [
+          {
+           "name": "param",
+           "keyword": "param"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_950580dd/ov_trend_dt",
+        "query": {
+         "datasetName": "ov_trend",
+         "parameters": [
+          {
+           "name": "param",
+           "keyword": "param"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-date-range-picker",
+       "encodings": {
+        "fields": [
+         {
+          "parameterName": "param",
+          "queryName": "parameter_950580dd/ov_kpi_dt"
+         },
+         {
+          "parameterName": "param",
+          "queryName": "parameter_950580dd/ov_leaderboard_dt"
+         },
+         {
+          "parameterName": "param",
+          "queryName": "parameter_950580dd/ov_trend_dt"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Date Range"
+       },
+       "selection": {
+        "defaultSelection": {
+         "range": {
+          "dataType": "DATE",
+          "min": {
+           "value": "2026-07-01T00:00:00.000"
+          },
+          "max": {
+           "value": "2026-12-31T23:59:59.999"
+          }
+         }
+        }
+       }
+      }
+     },
+     "position": {
+      "x": 6,
+      "y": 0,
+      "width": 3,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "35a73b24",
+      "queries": [
+       {
+        "name": "dashboards/950580dd/gspaces_field",
+        "query": {
+         "datasetName": "gspaces",
+         "fields": [
+          {
+           "name": "space_id",
+           "expression": "`space_id`"
+          },
+          {
+           "name": "space_name",
+           "expression": "`space_name`"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_950580dd/ov_kpi_sp",
+        "query": {
+         "datasetName": "ov_kpi",
+         "parameters": [
+          {
+           "name": "space_id",
+           "keyword": "space_id"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_950580dd/ov_leaderboard_sp",
+        "query": {
+         "datasetName": "ov_leaderboard",
+         "parameters": [
+          {
+           "name": "space_id",
+           "keyword": "space_id"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_950580dd/ov_trend_sp",
+        "query": {
+         "datasetName": "ov_trend",
+         "parameters": [
+          {
+           "name": "space_id",
+           "keyword": "space_id"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "space_id",
+          "queryName": "dashboards/950580dd/gspaces_field",
+          "displayName": "space_name"
+         },
+         {
+          "parameterName": "space_id",
+          "queryName": "parameter_950580dd/ov_kpi_sp"
+         },
+         {
+          "parameterName": "space_id",
+          "queryName": "parameter_950580dd/ov_leaderboard_sp"
+         },
+         {
+          "parameterName": "space_id",
+          "queryName": "parameter_950580dd/ov_trend_sp"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Genie Space"
+       }
+      }
+     },
+     "position": {
+      "x": 9,
+      "y": 0,
+      "width": 3,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "9e80812f",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ov_kpi",
+         "fields": [
+          {
+           "name": "active_spaces",
+           "expression": "SUM(`active_spaces`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "frame": {
+        "title": "Active Spaces",
+        "showTitle": true
+       },
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "active_spaces",
+         "format": {
+          "type": "number-plain",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 0
+          }
+         }
+        }
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 2,
+      "width": 2,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "7e2a510f",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ov_kpi",
+         "fields": [
+          {
+           "name": "questions",
+           "expression": "SUM(`questions`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "frame": {
+        "title": "Questions Asked",
+        "showTitle": true
+       },
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "questions",
+         "format": {
+          "type": "number-plain",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 0
+          }
+         }
+        }
+       }
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 2,
+      "width": 2,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "ae8c8d08",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ov_kpi",
+         "fields": [
+          {
+           "name": "users",
+           "expression": "SUM(`users`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "frame": {
+        "title": "Active Users",
+        "showTitle": true
+       },
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "users",
+         "format": {
+          "type": "number-plain",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 0
+          }
+         }
+        }
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 2,
+      "width": 2,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "af1f89a2",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "sum(ov_kpi__warehouse_usd)",
+           "expression": "SUM(`ov_kpi`.`warehouse_usd`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Warehouse Cost",
+         "fields": []
+        }
+       },
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "sum(ov_kpi__warehouse_usd)",
+         "format": {
+          "type": "number-currency",
+          "currencyCode": "USD",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 0
+          },
+          "significantFigures": {
+           "type": "all"
+          }
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 6,
+      "y": 2,
+      "width": 2,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "8f2a0cf7",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "sum(ov_kpi__token_usd)",
+           "expression": "SUM(`ov_kpi`.`token_usd`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "showDescription": true,
+        "title": {
+         "value": "Token Cost",
+         "fields": []
+        },
+        "description": {
+         "value": "(estimated)",
+         "fields": []
+        }
+       },
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "sum(ov_kpi__token_usd)",
+         "format": {
+          "type": "number-currency",
+          "currencyCode": "USD",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 2
+          }
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 8,
+      "y": 2,
+      "width": 2,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "7919658e",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "sum(ov_kpi__token_dbus)",
+           "expression": "SUM(`ov_kpi`.`token_dbus`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Token DBUs",
+         "fields": []
+        }
+       },
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "sum(ov_kpi__token_dbus)",
+         "format": {
+          "type": "number-plain",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 1
+          }
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 10,
+      "y": 2,
+      "width": 2,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "bf71c948",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "ov_adoption_trend__day",
+           "expression": "`ov_adoption_trend`.`day`"
+          },
+          {
+           "name": "sum(ov_adoption_trend__questions)",
+           "expression": "SUM(`ov_adoption_trend`.`questions`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Adoption Trend \u2014 Questions &amp; Users",
+         "fields": []
+        }
+       },
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "ov_adoption_trend__day",
+         "scale": {
+          "type": "temporal"
+         }
+        },
+        "y": {
+         "fieldName": "sum(ov_adoption_trend__questions)",
+         "scale": {
+          "type": "quantitative"
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 10,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "00d0a43f",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "sum(ov_space_leaderboard__positive)",
+           "expression": "SUM(`ov_space_leaderboard`.`positive`)"
+          },
+          {
+           "name": "sum(ov_space_leaderboard__negative)",
+           "expression": "SUM(`ov_space_leaderboard`.`negative`)"
+          },
+          {
+           "name": "countdistinct(ov_space_leaderboard__users)",
+           "expression": "COUNT(DISTINCT `ov_space_leaderboard`.`users`)"
+          },
+          {
+           "name": "sum(ov_space_leaderboard__questions)",
+           "expression": "SUM(`ov_space_leaderboard`.`questions`)"
+          },
+          {
+           "name": "ov_space_leaderboard__space_name",
+           "expression": "`ov_space_leaderboard`.`space_name`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Top Spaces by Questions",
+         "fields": []
+        }
+       },
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "sum(ov_space_leaderboard__questions)",
+         "displayName": "Questions",
+         "scale": {
+          "type": "quantitative"
+         }
+        },
+        "y": {
+         "fieldName": "ov_space_leaderboard__space_name",
+         "scale": {
+          "type": "categorical",
+          "categorySize": {
+           "type": "number-of-categories",
+           "number": 15
+          },
+          "sort": {
+           "by": "x-reversed"
+          }
+         }
+        },
+        "label": {
+         "show": true
+        },
+        "extra": [
+         {
+          "fieldName": "sum(ov_space_leaderboard__positive)"
+         },
+         {
+          "fieldName": "sum(ov_space_leaderboard__negative)"
+         },
+         {
+          "fieldName": "countdistinct(ov_space_leaderboard__users)"
+         }
+        ]
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 6,
+      "y": 10,
+      "width": 6,
+      "height": 12
+     }
+    },
+    {
+     "widget": {
+      "name": "ov_leaderboard_table",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "ov_space_leaderboard__space_name",
+           "expression": "`ov_space_leaderboard`.`space_name`"
+          },
+          {
+           "name": "sum(ov_space_leaderboard__questions)",
+           "expression": "SUM(`ov_space_leaderboard`.`questions`)"
+          },
+          {
+           "name": "sum(ov_space_leaderboard__users)",
+           "expression": "SUM(`ov_space_leaderboard`.`users`)"
+          },
+          {
+           "name": "sum(ov_space_leaderboard__views)",
+           "expression": "SUM(`ov_space_leaderboard`.`views`)"
+          },
+          {
+           "name": "sum(ov_space_leaderboard__positive)",
+           "expression": "SUM(`ov_space_leaderboard`.`positive`)"
+          },
+          {
+           "name": "sum(ov_space_leaderboard__negative)",
+           "expression": "SUM(`ov_space_leaderboard`.`negative`)"
+          },
+          {
+           "name": "sum(ov_space_leaderboard__warehouse_usd)",
+           "expression": "SUM(`ov_space_leaderboard`.`warehouse_usd`)"
+          },
+          {
+           "name": "sum(ov_space_leaderboard__token_usd)",
+           "expression": "SUM(`ov_space_leaderboard`.`token_usd`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Space Scorecard",
+         "fields": []
+        }
+       },
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "ov_space_leaderboard__space_name",
+          "displayName": "Space"
+         },
+         {
+          "fieldName": "sum(ov_space_leaderboard__questions)",
+          "displayName": "Questions"
+         },
+         {
+          "fieldName": "sum(ov_space_leaderboard__users)",
+          "displayName": "Users"
+         },
+         {
+          "fieldName": "sum(ov_space_leaderboard__views)",
+          "displayName": "Views"
+         },
+         {
+          "fieldName": "sum(ov_space_leaderboard__positive)",
+          "displayName": "Positive"
+         },
+         {
+          "fieldName": "sum(ov_space_leaderboard__negative)",
+          "displayName": "Negative"
+         },
+         {
+          "fieldName": "sum(ov_space_leaderboard__warehouse_usd)",
+          "format": {
+           "type": "number-currency",
+           "currencyCode": "USD",
+           "abbreviation": "compact",
+           "decimalPlaces": {
+            "type": "max",
+            "places": 2
+           }
+          },
+          "displayName": "WH Cost ($)"
+         },
+         {
+          "fieldName": "sum(ov_space_leaderboard__token_usd)",
+          "format": {
+           "type": "number-currency",
+           "currencyCode": "USD",
+           "abbreviation": "compact",
+           "decimalPlaces": {
+            "type": "max",
+            "places": 2
+           }
+          },
+          "displayName": "Token Cost ($)"
+         }
+        ]
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 4,
+      "width": 12,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "feedback_donut",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "sum(us_feedback_dist__messages)",
+           "expression": "SUM(`us_feedback_dist`.`messages`)"
+          },
+          {
+           "name": "us_feedback_dist__feedback_rating",
+           "expression": "`us_feedback_dist`.`feedback_rating`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Feedback Satisfaction",
+         "fields": []
+        }
+       },
+       "version": 3,
+       "widgetType": "pie",
+       "encodings": {
+        "angle": {
+         "fieldName": "sum(us_feedback_dist__messages)",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "Total Questions"
+        },
+        "color": {
+         "fieldName": "us_feedback_dist__feedback_rating",
+         "scale": {
+          "type": "categorical",
+          "mappings": [
+           {
+            "value": "POSITIVE",
+            "color": "#478743"
+           },
+           {
+            "value": "NEGATIVE",
+            "color": "#D64550"
+           },
+           {
+            "value": "NONE",
+            "color": "#9AA5B1"
+           }
+          ]
+         }
+        },
+        "label": {
+         "show": true
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 16,
+      "width": 4,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "sat_rate",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "measure(satisfaction_rate)",
+           "expression": "MEASURE(`satisfaction_rate`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "showDescription": true,
+        "title": {
+         "value": "Satisfaction Rate",
+         "fields": []
+        },
+        "description": {
+         "value": "Positive / (Positive + Negative)",
+         "fields": []
+        }
+       },
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "measure(satisfaction_rate)",
+         "format": {
+          "type": "number-percent",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 1
+          }
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 16,
+      "width": 2,
+      "height": 6
+     }
+    }
+   ],
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layoutVersion": "GRID_V1"
+  },
+  {
+   "name": "5573a1d0",
+   "displayName": "Genie Space Usage Analytics",
+   "layout": [
+    {
+     "widget": {
+      "name": "69fc4f20",
+      "multilineTextboxSpec": {
+       "lines": [
+        "\n",
+        "# Genie Space \u2014 Usage Analytics\n",
+        "Cost metrics (system tables) span all workspaces in this metastore; question/feedback metrics (Genie API) are limited to spaces this deployment can access."
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 6,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "9a4c1c59",
+      "queries": [
+       {
+        "name": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a60b51a140cc046c34f_param",
+        "query": {
+         "datasetName": "us_kpi",
+         "parameters": [
+          {
+           "name": "param",
+           "keyword": "param"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a61b820ac660b5dfcab_param",
+        "query": {
+         "datasetName": "us_reach",
+         "parameters": [
+          {
+           "name": "param",
+           "keyword": "param"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a61804c9944e0760855_param",
+        "query": {
+         "datasetName": "us_trend",
+         "parameters": [
+          {
+           "name": "param",
+           "keyword": "param"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a62bdc59da5dd4ed0cf_param",
+        "query": {
+         "datasetName": "us_feedback",
+         "parameters": [
+          {
+           "name": "param",
+           "keyword": "param"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a63b5d5c52c3663252b_param",
+        "query": {
+         "datasetName": "us_comments",
+         "parameters": [
+          {
+           "name": "param",
+           "keyword": "param"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a638a11f4453dbaa338_param",
+        "query": {
+         "datasetName": "us_errors",
+         "parameters": [
+          {
+           "name": "param",
+           "keyword": "param"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a649baa3e3f86dd0f56_param",
+        "query": {
+         "datasetName": "us_topusers",
+         "parameters": [
+          {
+           "name": "param",
+           "keyword": "param"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "frame": {
+        "showTitle": true,
+        "showDescription": true,
+        "title": {
+         "value": "Date Range",
+         "fields": []
+        },
+        "description": {
+         "value": "Defaults to last 90 days",
+         "fields": []
+        }
+       },
+       "widgetType": "filter-date-range-picker",
+       "encodings": {
+        "fields": [
+         {
+          "parameterName": "param",
+          "queryName": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a60b51a140cc046c34f_param"
+         },
+         {
+          "parameterName": "param",
+          "queryName": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a61b820ac660b5dfcab_param"
+         },
+         {
+          "parameterName": "param",
+          "queryName": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a61804c9944e0760855_param"
+         },
+         {
+          "parameterName": "param",
+          "queryName": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a62bdc59da5dd4ed0cf_param"
+         },
+         {
+          "parameterName": "param",
+          "queryName": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a63b5d5c52c3663252b_param"
+         },
+         {
+          "parameterName": "param",
+          "queryName": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a638a11f4453dbaa338_param"
+         },
+         {
+          "parameterName": "param",
+          "queryName": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a649baa3e3f86dd0f56_param"
+         }
+        ]
+       }
+      }
+     },
+     "position": {
+      "x": 6,
+      "y": 0,
+      "width": 3,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "1f8702ab",
+      "queries": [
+       {
+        "name": "dashboards/5573a1d0/gspaces_field",
+        "query": {
+         "datasetName": "gspaces",
+         "fields": [
+          {
+           "name": "space_id",
+           "expression": "`space_id`"
+          },
+          {
+           "name": "space_name",
+           "expression": "`space_name`"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_5573a1d0/us_kpi_sp",
+        "query": {
+         "datasetName": "us_kpi",
+         "parameters": [
+          {
+           "name": "space_id",
+           "keyword": "space_id"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_5573a1d0/us_reach_sp",
+        "query": {
+         "datasetName": "us_reach",
+         "parameters": [
+          {
+           "name": "space_id",
+           "keyword": "space_id"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_5573a1d0/us_trend_sp",
+        "query": {
+         "datasetName": "us_trend",
+         "parameters": [
+          {
+           "name": "space_id",
+           "keyword": "space_id"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_5573a1d0/us_feedback_sp",
+        "query": {
+         "datasetName": "us_feedback",
+         "parameters": [
+          {
+           "name": "space_id",
+           "keyword": "space_id"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_5573a1d0/us_comments_sp",
+        "query": {
+         "datasetName": "us_comments",
+         "parameters": [
+          {
+           "name": "space_id",
+           "keyword": "space_id"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_5573a1d0/us_errors_sp",
+        "query": {
+         "datasetName": "us_errors",
+         "parameters": [
+          {
+           "name": "space_id",
+           "keyword": "space_id"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_5573a1d0/us_topusers_sp",
+        "query": {
+         "datasetName": "us_topusers",
+         "parameters": [
+          {
+           "name": "space_id",
+           "keyword": "space_id"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "space_id",
+          "queryName": "dashboards/5573a1d0/gspaces_field",
+          "displayName": "space_name"
+         },
+         {
+          "parameterName": "space_id",
+          "queryName": "parameter_5573a1d0/us_kpi_sp"
+         },
+         {
+          "parameterName": "space_id",
+          "queryName": "parameter_5573a1d0/us_reach_sp"
+         },
+         {
+          "parameterName": "space_id",
+          "queryName": "parameter_5573a1d0/us_trend_sp"
+         },
+         {
+          "parameterName": "space_id",
+          "queryName": "parameter_5573a1d0/us_feedback_sp"
+         },
+         {
+          "parameterName": "space_id",
+          "queryName": "parameter_5573a1d0/us_comments_sp"
+         },
+         {
+          "parameterName": "space_id",
+          "queryName": "parameter_5573a1d0/us_errors_sp"
+         },
+         {
+          "parameterName": "space_id",
+          "queryName": "parameter_5573a1d0/us_topusers_sp"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Genie Space"
+       }
+      }
+     },
+     "position": {
+      "x": 9,
+      "y": 0,
+      "width": 3,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "da05fd8c",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "us_kpi",
+         "fields": [
+          {
+           "name": "questions",
+           "expression": "SUM(`questions`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "frame": {
+        "title": "Questions",
+        "showTitle": true
+       },
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "questions",
+         "format": {
+          "type": "number-plain",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 0
+          }
+         }
+        }
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 2,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "d391ea08",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "us_kpi",
+         "fields": [
+          {
+           "name": "users",
+           "expression": "SUM(`users`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "frame": {
+        "title": "Distinct Users",
+        "showTitle": true
+       },
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "users",
+         "format": {
+          "type": "number-plain",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 0
+          }
+         }
+        }
+       }
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 2,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "e440dd9f",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "us_kpi",
+         "fields": [
+          {
+           "name": "views",
+           "expression": "SUM(`views`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "frame": {
+        "title": "Space Views",
+        "showTitle": true
+       },
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "views",
+         "format": {
+          "type": "number-plain",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 0
+          }
+         }
+        }
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 2,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "8319f94b",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "us_kpi",
+         "fields": [
+          {
+           "name": "median",
+           "expression": "MAX(`median_msgs_per_conv`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "frame": {
+        "title": "Median Msgs/Conv",
+        "showTitle": true
+       },
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "median",
+         "format": {
+          "type": "number-plain",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 1
+          }
+         }
+        }
+       }
+      }
+     },
+     "position": {
+      "x": 6,
+      "y": 2,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "39444785",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "sum(us_reach_vs_depth__views)",
+           "expression": "SUM(`us_reach_vs_depth`.`views`)"
+          },
+          {
+           "name": "sum(us_reach_vs_depth__questions)",
+           "expression": "SUM(`us_reach_vs_depth`.`questions`)"
+          },
+          {
+           "name": "us_reach_vs_depth__space_name",
+           "expression": "`us_reach_vs_depth`.`space_name`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "showDescription": true,
+        "title": {
+         "value": "Reach vs Depth",
+         "fields": []
+        },
+        "description": {
+         "value": "Views and questions by space",
+         "fields": []
+        }
+       },
+       "version": 3,
+       "mark": {
+        "colors": [
+         null,
+         {
+          "themeColorType": "visualizationColors",
+          "position": 8
+         }
+        ]
+       },
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "scale": {
+          "type": "quantitative"
+         },
+         "fields": [
+          {
+           "fieldName": "sum(us_reach_vs_depth__views)"
+          },
+          {
+           "fieldName": "sum(us_reach_vs_depth__questions)"
+          }
+         ]
+        },
+        "y": {
+         "fieldName": "us_reach_vs_depth__space_name",
+         "scale": {
+          "type": "categorical",
+          "categorySize": {
+           "type": "number-of-categories",
+           "number": 20
+          },
+          "sort": {
+           "by": "x-reversed"
+          }
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 5,
+      "width": 6,
+      "height": 12
+     }
+    },
+    {
+     "widget": {
+      "name": "53f15146",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "us_trend",
+         "fields": [
+          {
+           "name": "day",
+           "expression": "`day`"
+          },
+          {
+           "name": "questions",
+           "expression": "SUM(`questions`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 1,
+       "widgetType": "combo",
+       "encodings": {
+        "x": {
+         "fieldName": "day",
+         "scale": {
+          "type": "temporal"
+         }
+        },
+        "y": {
+         "primary": {
+          "fields": [
+           {
+            "fieldName": "questions"
+           }
+          ]
+         },
+         "secondary": {
+          "fields": []
+         },
+         "scale": {
+          "type": "quantitative"
+         }
+        }
+       },
+       "frame": {
+        "title": "Questions Over Time",
+        "showTitle": true
+       }
+      }
+     },
+     "position": {
+      "x": 6,
+      "y": 5,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "13a49c75",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "sum(us_feedback_dist__messages)",
+           "expression": "SUM(`us_feedback_dist`.`messages`)"
+          },
+          {
+           "name": "us_feedback_dist__feedback_rating",
+           "expression": "`us_feedback_dist`.`feedback_rating`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Feedback Distribution",
+         "fields": []
+        }
+       },
+       "version": 3,
+       "widgetType": "pie",
+       "encodings": {
+        "angle": {
+         "fieldName": "sum(us_feedback_dist__messages)",
+         "scale": {
+          "type": "quantitative"
+         }
+        },
+        "color": {
+         "fieldName": "us_feedback_dist__feedback_rating",
+         "scale": {
+          "type": "categorical",
+          "mappings": [
+           {
+            "value": "POSITIVE",
+            "color": "#478743"
+           },
+           {
+            "value": "NEGATIVE",
+            "color": "#D64550"
+           },
+           {
+            "value": "NONE",
+            "color": "#9AA5B1"
+           }
+          ]
+         }
+        },
+        "label": {
+         "show": true
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 6,
+      "y": 11,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "3a8b974c",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "us_topusers",
+         "fields": [
+          {
+           "name": "user_email",
+           "expression": "`user_email`"
+          },
+          {
+           "name": "questions",
+           "expression": "SUM(`questions`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "user_email",
+         "scale": {
+          "type": "categorical"
+         }
+        },
+        "y": {
+         "fieldName": "questions",
+         "scale": {
+          "type": "quantitative"
+         }
+        }
+       },
+       "frame": {
+        "title": "Top Users by Questions",
+        "showTitle": true
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 17,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "40ccf883",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "us_errors",
+         "fields": [
+          {
+           "name": "space_name",
+           "expression": "`space_name`"
+          },
+          {
+           "name": "errors",
+           "expression": "SUM(`errors`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "space_name",
+         "scale": {
+          "type": "categorical"
+         }
+        },
+        "y": {
+         "fieldName": "errors",
+         "scale": {
+          "type": "quantitative"
+         }
+        }
+       },
+       "frame": {
+        "title": "Errors / Failures by Space",
+        "showTitle": true
+       }
+      }
+     },
+     "position": {
+      "x": 6,
+      "y": 17,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "cnt_sat_rate",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "measure(satisfaction_rate)",
+           "expression": "MEASURE(`satisfaction_rate`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "showDescription": true,
+        "title": "Satisfaction Rate",
+        "description": {
+         "value": "Of rated questions",
+         "fields": []
+        }
+       },
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "measure(satisfaction_rate)",
+         "format": {
+          "type": "number-percent",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 1
+          }
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 8,
+      "y": 2,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "cnt_errors",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "sum(us_error_rate__errors)",
+           "expression": "SUM(`us_error_rate`.`errors`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": "Errors"
+       },
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "sum(us_error_rate__errors)",
+         "format": {
+          "type": "number-plain",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 0
+          }
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 10,
+      "y": 2,
+      "width": 2,
+      "height": 3
+     }
+    }
+   ],
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layoutVersion": "GRID_V1"
+  },
+  {
+   "name": "d4a63ebe",
+   "displayName": "Genie Space Cost Analytics",
+   "layout": [
+    {
+     "widget": {
+      "name": "1f8b234b",
+      "multilineTextboxSpec": {
+       "lines": [
+        "\n",
+        "# Genie Space \u2014 Cost Analytics\n",
+        "Cost metrics (system tables) span all workspaces in this metastore; question/feedback metrics (Genie API) are limited to spaces this deployment can access."
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 6,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "998b5da3",
+      "queries": [
+       {
+        "name": "parameter_d4a63ebe/co_kpi_dt",
+        "query": {
+         "datasetName": "co_kpi",
+         "parameters": [
+          {
+           "name": "param",
+           "keyword": "param"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_d4a63ebe/co_category_dt",
+        "query": {
+         "datasetName": "co_category",
+         "parameters": [
+          {
+           "name": "param",
+           "keyword": "param"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_d4a63ebe/co_perq_dt",
+        "query": {
+         "datasetName": "co_perq",
+         "parameters": [
+          {
+           "name": "param",
+           "keyword": "param"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_d4a63ebe/co_token_dt",
+        "query": {
+         "datasetName": "co_token",
+         "parameters": [
+          {
+           "name": "param",
+           "keyword": "param"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-date-range-picker",
+       "encodings": {
+        "fields": [
+         {
+          "parameterName": "param",
+          "queryName": "parameter_d4a63ebe/co_kpi_dt"
+         },
+         {
+          "parameterName": "param",
+          "queryName": "parameter_d4a63ebe/co_category_dt"
+         },
+         {
+          "parameterName": "param",
+          "queryName": "parameter_d4a63ebe/co_perq_dt"
+         },
+         {
+          "parameterName": "param",
+          "queryName": "parameter_d4a63ebe/co_token_dt"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Date Range"
+       },
+       "selection": {
+        "defaultSelection": {
+         "range": {
+          "dataType": "DATE",
+          "min": {
+           "value": "2026-07-01T00:00:00.000"
+          },
+          "max": {
+           "value": "2026-12-31T23:59:59.999"
+          }
+         }
+        }
+       }
+      }
+     },
+     "position": {
+      "x": 6,
+      "y": 0,
+      "width": 3,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "c64a491d",
+      "queries": [
+       {
+        "name": "dashboards/d4a63ebe/gspaces_field",
+        "query": {
+         "datasetName": "gspaces",
+         "fields": [
+          {
+           "name": "space_id",
+           "expression": "`space_id`"
+          },
+          {
+           "name": "space_name",
+           "expression": "`space_name`"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_d4a63ebe/co_kpi_sp",
+        "query": {
+         "datasetName": "co_kpi",
+         "parameters": [
+          {
+           "name": "space_id",
+           "keyword": "space_id"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_d4a63ebe/co_category_sp",
+        "query": {
+         "datasetName": "co_category",
+         "parameters": [
+          {
+           "name": "space_id",
+           "keyword": "space_id"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_d4a63ebe/co_perq_sp",
+        "query": {
+         "datasetName": "co_perq",
+         "parameters": [
+          {
+           "name": "space_id",
+           "keyword": "space_id"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_d4a63ebe/co_token_sp",
+        "query": {
+         "datasetName": "co_token",
+         "parameters": [
+          {
+           "name": "space_id",
+           "keyword": "space_id"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "space_id",
+          "queryName": "dashboards/d4a63ebe/gspaces_field",
+          "displayName": "space_name"
+         },
+         {
+          "parameterName": "space_id",
+          "queryName": "parameter_d4a63ebe/co_kpi_sp"
+         },
+         {
+          "parameterName": "space_id",
+          "queryName": "parameter_d4a63ebe/co_category_sp"
+         },
+         {
+          "parameterName": "space_id",
+          "queryName": "parameter_d4a63ebe/co_perq_sp"
+         },
+         {
+          "parameterName": "space_id",
+          "queryName": "parameter_d4a63ebe/co_token_sp"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Genie Space"
+       }
+      }
+     },
+     "position": {
+      "x": 9,
+      "y": 0,
+      "width": 3,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "19efd5ec",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "co_kpi",
+         "fields": [
+          {
+           "name": "warehouse_usd",
+           "expression": "SUM(`warehouse_usd`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "frame": {
+        "title": "Warehouse Cost",
+        "showTitle": true
+       },
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "warehouse_usd",
+         "format": {
+          "type": "number-currency",
+          "currencyCode": "USD",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 2
+          }
+         }
+        }
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 2,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "00874e41",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "sum(co_kpi__token_usd)",
+           "expression": "SUM(`co_kpi`.`token_usd`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "showDescription": true,
+        "title": {
+         "value": "Token Cost",
+         "fields": []
+        },
+        "description": {
+         "value": "(estimated)",
+         "fields": []
+        }
+       },
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "sum(co_kpi__token_usd)",
+         "format": {
+          "type": "number-currency",
+          "currencyCode": "USD",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 2
+          }
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 2,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "a76efd43",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "max(co_kpi__avg_wh_per_q)",
+           "expression": "MAX(`co_kpi`.`avg_wh_per_q`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "showDescription": true,
+        "title": {
+         "value": "Avg Warehouse $/Question",
+         "fields": []
+        },
+        "description": {
+         "value": "(estimated)",
+         "fields": []
+        }
+       },
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "max(co_kpi__avg_wh_per_q)",
+         "format": {
+          "type": "number-currency",
+          "currencyCode": "USD",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 2
+          }
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 2,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "499ec021",
+      "multilineTextboxSpec": {
+       "lines": [
+        "### Warehouse cost breakdown\n",
+        "\n",
+        "Conversational (actual Genie messages) + authoring/profiling + overhead = total warehouse cost per space."
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 5,
+      "width": 12,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "0084cce2",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "co_cost_by_category__genie_cost_category",
+           "expression": "`co_cost_by_category`.`genie_cost_category`"
+          },
+          {
+           "name": "sum(co_cost_by_category__cost_usd)",
+           "expression": "SUM(`co_cost_by_category`.`cost_usd`)"
+          },
+          {
+           "name": "co_cost_by_category__genie_space",
+           "expression": "`co_cost_by_category`.`genie_space`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Warehouse Cost by Space &amp; Category",
+         "fields": []
+        }
+       },
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "sum(co_cost_by_category__cost_usd)",
+         "format": {
+          "type": "number-currency",
+          "currencyCode": "USD",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 2
+          }
+         },
+         "scale": {
+          "type": "quantitative"
+         }
+        },
+        "y": {
+         "fieldName": "co_cost_by_category__genie_space",
+         "scale": {
+          "type": "categorical",
+          "categorySize": {
+           "type": "number-of-categories",
+           "number": 20
+          },
+          "sort": {
+           "by": "x-reversed"
+          }
+         }
+        },
+        "color": {
+         "fieldName": "co_cost_by_category__genie_cost_category",
+         "scale": {
+          "type": "categorical",
+          "mappings": [
+           {
+            "value": "CONVERSATIONAL",
+            "color": "#5FA8D3"
+           },
+           {
+            "value": "AUTHORING_PROFILING",
+            "color": "#E0A030"
+           },
+           {
+            "value": "SCHEMA_PROBE",
+            "color": "#9AA5B1"
+           },
+           {
+            "value": "METADATA_OTHER",
+            "color": "#C6D2DE"
+           },
+           {
+            "value": "OTHER_UNATTRIBUTED",
+            "color": "#8B6DB8"
+           }
+          ]
+         }
+        },
+        "label": {
+         "show": false,
+         "showTotal": true
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 7,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "4ed2964f",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "sum(co_cost_by_category__cost_usd)",
+           "expression": "SUM(`co_cost_by_category`.`cost_usd`)"
+          },
+          {
+           "name": "co_cost_by_category__genie_cost_class",
+           "expression": "`co_cost_by_category`.`genie_cost_class`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Usage vs Authoring vs Overhead",
+         "fields": []
+        }
+       },
+       "version": 3,
+       "widgetType": "pie",
+       "encodings": {
+        "angle": {
+         "fieldName": "sum(co_cost_by_category__cost_usd)",
+         "scale": {
+          "type": "quantitative"
+         }
+        },
+        "color": {
+         "fieldName": "co_cost_by_category__genie_cost_class",
+         "scale": {
+          "type": "categorical",
+          "mappings": [
+           {
+            "value": "USAGE",
+            "color": "#5FA8D3"
+           },
+           {
+            "value": "AUTHORING",
+            "color": "#E0A030"
+           },
+           {
+            "value": "OVERHEAD_OR_UNATTRIBUTED",
+            "color": "#9AA5B1"
+           }
+          ]
+         }
+        },
+        "label": {
+         "show": true
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 9,
+      "y": 13,
+      "width": 3,
+      "height": 4
+     }
+    },
+    {
+     "widget": {
+      "name": "9a403500",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "sum(co_token_by_space__token_dbus)",
+           "expression": "SUM(`co_token_by_space`.`token_dbus`)"
+          },
+          {
+           "name": "co_token_by_space__space_name",
+           "expression": "`co_token_by_space`.`space_name`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Token DBUs by Space",
+         "fields": []
+        }
+       },
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "sum(co_token_by_space__token_dbus)",
+         "format": {
+          "type": "number-plain",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 1
+          }
+         },
+         "scale": {
+          "type": "quantitative"
+         }
+        },
+        "y": {
+         "fieldName": "co_token_by_space__space_name",
+         "scale": {
+          "type": "categorical",
+          "categorySize": {
+           "type": "number-of-categories",
+           "number": 20
+          },
+          "sort": {
+           "by": "x-reversed"
+          }
+         }
+        },
+        "label": {
+         "show": false
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 6,
+      "y": 7,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "cnt_total_cost",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "sum(co_kpi__warehouse_usd)",
+           "expression": "SUM(`co_kpi`.`warehouse_usd`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "showDescription": true,
+        "title": {
+         "value": "Total Cost",
+         "fields": []
+        },
+        "description": {
+         "value": "Warehouse + Token (estimated)",
+         "fields": []
+        }
+       },
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "sum(co_kpi__warehouse_usd)",
+         "format": {
+          "type": "number-currency",
+          "currencyCode": "USD",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 2
+          }
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 6,
+      "y": 2,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "cnt_token_dbus",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "sum(co_token_by_space__token_dbus)",
+           "expression": "SUM(`co_token_by_space`.`token_dbus`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": "Token DBUs"
+       },
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "sum(co_token_by_space__token_dbus)",
+         "format": {
+          "type": "number-plain",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 1
+          }
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 8,
+      "y": 2,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "cnt_sat_rate",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "measure(satisfaction_rate)",
+           "expression": "MEASURE(`satisfaction_rate`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "showDescription": true,
+        "title": "Satisfaction Rate",
+        "description": {
+         "value": "Of rated questions",
+         "fields": []
+        }
+       },
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "measure(satisfaction_rate)",
+         "format": {
+          "type": "number-percent",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 1
+          }
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 10,
+      "y": 2,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "costliest_questions",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "co_cost_per_question__space_name",
+           "expression": "`co_cost_per_question`.`space_name`"
+          },
+          {
+           "name": "co_cost_per_question__question",
+           "expression": "`co_cost_per_question`.`question`"
+          },
+          {
+           "name": "sum(co_cost_per_question__num_statements)",
+           "expression": "SUM(`co_cost_per_question`.`num_statements`)"
+          },
+          {
+           "name": "sum(co_cost_per_question__cost_usd)",
+           "expression": "SUM(`co_cost_per_question`.`cost_usd`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Costliest Questions",
+         "fields": []
+        }
+       },
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "co_cost_per_question__space_name",
+          "displayName": "Space"
+         },
+         {
+          "fieldName": "co_cost_per_question__question",
+          "displayName": "Question ID"
+         },
+         {
+          "fieldName": "sum(co_cost_per_question__num_statements)",
+          "displayName": "Statements"
+         },
+         {
+          "fieldName": "sum(co_cost_per_question__cost_usd)",
+          "format": {
+           "type": "number-currency",
+           "currencyCode": "USD",
+           "abbreviation": "none",
+           "decimalPlaces": {
+            "type": "max",
+            "places": 2
+           }
+          },
+          "displayName": "Cost ($)"
+         }
+        ]
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 13,
+      "width": 9,
+      "height": 4
+     }
+    }
+   ],
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layoutVersion": "GRID_V1"
+  },
+  {
+   "name": "ec104f02",
+   "displayName": "Genie Token",
+   "layout": [
+    {
+     "widget": {
+      "name": "79381cd0",
+      "multilineTextboxSpec": {
+       "lines": [
+        "\n",
+        "# Genie Token Usage \u2014 Suite-wide\n",
+        "LLM token consumption across ALL Genie products (Code / One / Agents), in DBUs. Free-tier (GENIE_FREE_USAGE) is $0. Account-wide across the metastore."
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 6,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "1c212fa8",
+      "queries": [
+       {
+        "name": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a67a2bc4d776ab3dba8_param",
+        "query": {
+         "datasetName": "tk_kpi",
+         "parameters": [
+          {
+           "name": "param",
+           "keyword": "param"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a68b3e7696fa98f25ea_param",
+        "query": {
+         "datasetName": "tk_product",
+         "parameters": [
+          {
+           "name": "param",
+           "keyword": "param"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a69960e40997614725f_param",
+        "query": {
+         "datasetName": "tk_tier",
+         "parameters": [
+          {
+           "name": "param",
+           "keyword": "param"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a69aeb335481f8cb63f_param",
+        "query": {
+         "datasetName": "tk_user",
+         "parameters": [
+          {
+           "name": "param",
+           "keyword": "param"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a6aa8608f8d107be47c_param",
+        "query": {
+         "datasetName": "tk_channel",
+         "parameters": [
+          {
+           "name": "param",
+           "keyword": "param"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a6abb48c0abc8a50983_param",
+        "query": {
+         "datasetName": "tk_trend",
+         "parameters": [
+          {
+           "name": "param",
+           "keyword": "param"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Date Range",
+         "fields": []
+        }
+       },
+       "widgetType": "filter-date-range-picker",
+       "encodings": {
+        "fields": [
+         {
+          "parameterName": "param",
+          "queryName": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a67a2bc4d776ab3dba8_param"
+         },
+         {
+          "parameterName": "param",
+          "queryName": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a68b3e7696fa98f25ea_param"
+         },
+         {
+          "parameterName": "param",
+          "queryName": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a69960e40997614725f_param"
+         },
+         {
+          "parameterName": "param",
+          "queryName": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a69aeb335481f8cb63f_param"
+         },
+         {
+          "parameterName": "param",
+          "queryName": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a6aa8608f8d107be47c_param"
+         },
+         {
+          "parameterName": "param",
+          "queryName": "parameter_dashboards/01f1b5d398b516fca59a4cfb0a05453d/datasets/01f1b5d398b71a6abb48c0abc8a50983_param"
+         }
+        ]
+       }
+      }
+     },
+     "position": {
+      "x": 6,
+      "y": 0,
+      "width": 6,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "139b1145",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "tk_over_time_by_product__day",
+           "expression": "`tk_over_time_by_product`.`day`"
+          },
+          {
+           "name": "sum(tk_over_time_by_product__dbus)",
+           "expression": "SUM(`tk_over_time_by_product`.`dbus`)"
+          }
+         ],
+         "disaggregated": false,
+         "orders": [
+          {
+           "direction": "DESC",
+           "expression": "`tk_over_time_by_product`.`day`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Token DBUs",
+         "fields": []
+        }
+       },
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "sum(tk_over_time_by_product__dbus)",
+         "format": {
+          "type": "number-plain",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 1
+          }
+         }
+        },
+        "period": {
+         "fieldName": "tk_over_time_by_product__day",
+         "hideLabels": false
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 2,
+      "width": 5,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "2416f287",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "tk_over_time_by_product__day",
+           "expression": "`tk_over_time_by_product`.`day`"
+          },
+          {
+           "name": "sum(tk_over_time_by_product__usd)",
+           "expression": "SUM(`tk_over_time_by_product`.`usd`)"
+          }
+         ],
+         "disaggregated": false,
+         "orders": [
+          {
+           "direction": "DESC",
+           "expression": "`tk_over_time_by_product`.`day`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "showDescription": true,
+        "title": {
+         "value": "Token Cost",
+         "fields": []
+        },
+        "description": {
+         "value": "(estimated)",
+         "fields": []
+        }
+       },
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "sum(tk_over_time_by_product__usd)",
+         "format": {
+          "type": "number-currency",
+          "currencyCode": "USD",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 2
+          }
+         }
+        },
+        "period": {
+         "fieldName": "tk_over_time_by_product__day",
+         "hideLabels": false
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 5,
+      "y": 2,
+      "width": 4,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "078e7fe6",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "sum(tk_kpi__free_dbus)",
+           "expression": "SUM(`tk_kpi`.`free_dbus`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Free DBUs",
+         "fields": []
+        }
+       },
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "sum(tk_kpi__free_dbus)",
+         "format": {
+          "type": "number-plain",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 1
+          }
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 9,
+      "y": 3,
+      "width": 3,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "c14af1c6",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "sum(tk_kpi__paid_dbus)",
+           "expression": "SUM(`tk_kpi`.`paid_dbus`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Paid DBUs",
+         "fields": []
+        }
+       },
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "sum(tk_kpi__paid_dbus)",
+         "format": {
+          "type": "number-plain",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 1
+          }
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 9,
+      "y": 4,
+      "width": 3,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "152a01f7",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "sum(tk_product_mix__dbus)",
+           "expression": "SUM(`tk_product_mix`.`dbus`)"
+          },
+          {
+           "name": "tk_product_mix__genie_surface",
+           "expression": "`tk_product_mix`.`genie_surface`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Token DBUs by Product",
+         "fields": []
+        }
+       },
+       "version": 3,
+       "widgetType": "pie",
+       "encodings": {
+        "angle": {
+         "fieldName": "sum(tk_product_mix__dbus)",
+         "scale": {
+          "type": "quantitative"
+         }
+        },
+        "color": {
+         "fieldName": "tk_product_mix__genie_surface",
+         "scale": {
+          "type": "categorical",
+          "mappings": [
+           {
+            "value": "GENIE_CODE",
+            "color": "#E0A030"
+           },
+           {
+            "value": "GENIE_ONE",
+            "color": "#8B6DB8"
+           },
+           {
+            "value": "GENIE_AGENTS",
+            "color": "#5FA8D3"
+           }
+          ]
+         }
+        },
+        "label": {
+         "show": true
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 5,
+      "width": 4,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "33fa88a6",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "sum(tk_tier__dbus)",
+           "expression": "SUM(`tk_tier`.`dbus`)"
+          },
+          {
+           "name": "tk_tier__tier",
+           "expression": "`tk_tier`.`tier`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Free vs Paid",
+         "fields": []
+        }
+       },
+       "version": 3,
+       "widgetType": "pie",
+       "encodings": {
+        "angle": {
+         "fieldName": "sum(tk_tier__dbus)",
+         "scale": {
+          "type": "quantitative"
+         }
+        },
+        "color": {
+         "fieldName": "tk_tier__tier",
+         "scale": {
+          "type": "categorical",
+          "mappings": [
+           {
+            "value": "FREE",
+            "color": "#478743"
+           },
+           {
+            "value": "PAID",
+            "color": "#31567A"
+           }
+          ]
+         }
+        },
+        "label": {
+         "show": true
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 5,
+      "width": 4,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "df89b380",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "sum(tk_channel__dbus)",
+           "expression": "SUM(`tk_channel`.`dbus`)"
+          },
+          {
+           "name": "tk_channel__genie_channel",
+           "expression": "`tk_channel`.`genie_channel`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "UI vs API",
+         "fields": []
+        }
+       },
+       "version": 3,
+       "widgetType": "pie",
+       "encodings": {
+        "angle": {
+         "fieldName": "sum(tk_channel__dbus)",
+         "scale": {
+          "type": "quantitative"
+         }
+        },
+        "color": {
+         "fieldName": "tk_channel__genie_channel",
+         "scale": {
+          "type": "categorical",
+          "mappings": [
+           {
+            "value": "UI",
+            "color": "#2E8B9E"
+           },
+           {
+            "value": "API",
+            "color": "#31567A"
+           }
+          ]
+         }
+        },
+        "label": {
+         "show": true
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 8,
+      "y": 5,
+      "width": 4,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "cfdf0d5d",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "tk_over_time_by_product__genie_surface",
+           "expression": "`tk_over_time_by_product`.`genie_surface`"
+          },
+          {
+           "name": "tk_over_time_by_product__day",
+           "expression": "`tk_over_time_by_product`.`day`"
+          },
+          {
+           "name": "sum(tk_over_time_by_product__usd)",
+           "expression": "SUM(`tk_over_time_by_product`.`usd`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Token Cost Over Time by Product",
+         "fields": []
+        }
+       },
+       "version": 3,
+       "widgetType": "area",
+       "encodings": {
+        "x": {
+         "fieldName": "tk_over_time_by_product__day",
+         "scale": {
+          "type": "temporal"
+         }
+        },
+        "y": {
+         "fieldName": "sum(tk_over_time_by_product__usd)",
+         "scale": {
+          "type": "quantitative"
+         }
+        },
+        "color": {
+         "fieldName": "tk_over_time_by_product__genie_surface",
+         "scale": {
+          "type": "categorical",
+          "mappings": [
+           {
+            "value": "GENIE_CODE",
+            "color": {
+             "themeColorType": "visualizationColors",
+             "position": 5
+            }
+           },
+           {
+            "value": "GENIE_ONE",
+            "color": {
+             "themeColorType": "visualizationColors",
+             "position": 8
+            }
+           }
+          ]
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 11,
+      "width": 8,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "69763396",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "tk_by_user__user_email",
+           "expression": "`tk_by_user`.`user_email`"
+          },
+          {
+           "name": "sum(tk_by_user__dbus)",
+           "expression": "SUM(`tk_by_user`.`dbus`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Token DBUs by User",
+         "fields": []
+        }
+       },
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "tk_by_user__user_email",
+         "scale": {
+          "type": "categorical",
+          "sort": {
+           "by": "y-reversed"
+          }
+         }
+        },
+        "y": {
+         "fieldName": "sum(tk_by_user__dbus)",
+         "format": {
+          "type": "number-plain",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 1
+          }
+         },
+         "scale": {
+          "type": "quantitative"
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 8,
+      "y": 11,
+      "width": 4,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "8dbfe4ef",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "sum(tk_kpi__dbus)",
+           "expression": "SUM(`tk_kpi`.`dbus`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Total DBUs",
+         "fields": []
+        }
+       },
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "sum(tk_kpi__dbus)",
+         "format": {
+          "type": "number-plain",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 1
+          }
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 9,
+      "y": 2,
+      "width": 3,
+      "height": 1
+     }
+    }
+   ],
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layoutVersion": "GRID_V1"
+  },
+  {
+   "name": "vector-search",
+   "displayName": "Vector Search",
+   "layout": [
+    {
+     "widget": {
+      "name": "vector-search-cost",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "vector_search_usage__usage_date",
+           "expression": "`vector_search_usage`.`usage_date`"
+          },
+          {
+           "name": "sum(vector_search_usage__dollars)",
+           "expression": "SUM(`vector_search_usage`.`dollars`)"
+          }
+         ],
+         "disaggregated": false,
+         "orders": [
+          {
+           "direction": "DESC",
+           "expression": "`vector_search_usage`.`usage_date`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Total Cost",
+         "fields": []
+        }
+       },
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "sum(vector_search_usage__dollars)",
+         "format": {
+          "type": "number-currency",
+          "currencyCode": "USD",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 2
+          }
+         }
+        },
+        "period": {
+         "fieldName": "vector_search_usage__usage_date",
+         "hideLabels": false
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 2,
+      "width": 3,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "view-trends-by-workspaces",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "vs_usage",
+         "fields": [
+          {
+           "name": "workspace_name",
+           "expression": "`workspace_name`"
+          },
+          {
+           "name": "monthly(usage_date)",
+           "expression": "DATE_TRUNC(\"MONTH\", `usage_date`)"
+          },
+          {
+           "name": "sum(dollars)",
+           "expression": "SUM(`dollars`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "area",
+       "encodings": {
+        "x": {
+         "fieldName": "monthly(usage_date)",
+         "displayName": "Month",
+         "scale": {
+          "type": "temporal"
+         }
+        },
+        "y": {
+         "fieldName": "sum(dollars)",
+         "displayName": "Cost (USD)",
+         "scale": {
+          "type": "quantitative"
+         }
+        },
+        "color": {
+         "fieldName": "workspace_name",
+         "scale": {
+          "type": "categorical"
+         }
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Vector Search cost trend"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 5,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "vector-search-cost-by-endpoint",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "vector_search_usage__sku_name",
+           "expression": "`vector_search_usage`.`sku_name`"
+          },
+          {
+           "name": "sum(vector_search_usage__dollars)",
+           "expression": "SUM(`vector_search_usage`.`dollars`)"
+          },
+          {
+           "name": "vector_search_usage__endpoint_name",
+           "expression": "`vector_search_usage`.`endpoint_name`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Vector Search cost by endpoint and SKU",
+         "fields": []
+        }
+       },
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "sum(vector_search_usage__dollars)",
+         "displayName": "Cost (USD)",
+         "scale": {
+          "type": "quantitative"
+         }
+        },
+        "y": {
+         "fieldName": "vector_search_usage__endpoint_name",
+         "axis": {
+          "hideTitle": true
+         },
+         "displayName": "Endpoint",
+         "scale": {
+          "type": "categorical",
+          "categorySize": {
+           "type": "number-of-categories",
+           "number": 20
+          },
+          "sort": {
+           "by": "x-reversed"
+          }
+         }
+        },
+        "color": {
+         "fieldName": "vector_search_usage__sku_name",
+         "scale": {
+          "type": "categorical"
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 6,
+      "y": 5,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "vector-endpoint-name",
+      "queries": [
+       {
+        "name": "dashboards/01f0d05a59391ad087e297c5e9c9aed5/datasets/01f0d05da6581eb7b55852603c695ee4_model_name",
+        "query": {
+         "datasetName": "vs_usage",
+         "fields": [
+          {
+           "name": "endpoint_name",
+           "expression": "`endpoint_name`"
+          },
+          {
+           "name": "endpoint_name_associativity",
+           "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "endpoint_name",
+          "queryName": "dashboards/01f0d05a59391ad087e297c5e9c9aed5/datasets/01f0d05da6581eb7b55852603c695ee4_model_name"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Vector Search Endpoint"
+       }
+      }
+     },
+     "position": {
+      "x": 6,
+      "y": 0,
+      "width": 6,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "vector-search-dbus",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "vector_search_usage__usage_date",
+           "expression": "`vector_search_usage`.`usage_date`"
+          },
+          {
+           "name": "sum(vector_search_usage__dbus)",
+           "expression": "SUM(`vector_search_usage`.`dbus`)"
+          }
+         ],
+         "disaggregated": false,
+         "orders": [
+          {
+           "direction": "DESC",
+           "expression": "`vector_search_usage`.`usage_date`"
+          }
+         ]
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": {
+         "value": "Total DBUs",
+         "fields": []
+        }
+       },
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "sum(vector_search_usage__dbus)",
+         "format": {
+          "type": "number-plain",
+          "abbreviation": "compact",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 1
+          }
+         }
+        },
+        "period": {
+         "fieldName": "vector_search_usage__usage_date",
+         "hideLabels": false
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 3,
+      "y": 2,
+      "width": 3,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "vs_header",
+      "multilineTextboxSpec": {
+       "lines": [
+        "\n",
+        "# Vector Search\n",
+        "Cost and DBU consumption across all Vector Search endpoints. Account-wide across the metastore."
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 6,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "sku_pie",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "sum(vector_search_usage__dollars)",
+           "expression": "SUM(`vector_search_usage`.`dollars`)"
+          },
+          {
+           "name": "vector_search_usage__sku_name",
+           "expression": "`vector_search_usage`.`sku_name`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": "Cost by SKU"
+       },
+       "version": 3,
+       "widgetType": "pie",
+       "encodings": {
+        "angle": {
+         "fieldName": "sum(vector_search_usage__dollars)",
+         "scale": {
+          "type": "quantitative"
+         }
+        },
+        "color": {
+         "fieldName": "vector_search_usage__sku_name",
+         "scale": {
+          "type": "categorical"
+         }
+        },
+        "label": {
+         "show": true
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 11,
+      "width": 4,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "ws_table",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "vector_search_usage__workspace_name",
+           "expression": "`vector_search_usage`.`workspace_name`"
+          },
+          {
+           "name": "sum(vector_search_usage__dollars)",
+           "expression": "SUM(`vector_search_usage`.`dollars`)"
+          },
+          {
+           "name": "sum(vector_search_usage__dbus)",
+           "expression": "SUM(`vector_search_usage`.`dbus`)"
+          },
+          {
+           "name": "countdistinct(vector_search_usage__endpoint_name)",
+           "expression": "COUNT(DISTINCT `vector_search_usage`.`endpoint_name`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": "Cost by Workspace"
+       },
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "vector_search_usage__workspace_name",
+          "displayName": "Workspace"
+         },
+         {
+          "fieldName": "sum(vector_search_usage__dollars)",
+          "format": {
+           "type": "number-currency",
+           "currencyCode": "USD",
+           "abbreviation": "none",
+           "decimalPlaces": {
+            "type": "max",
+            "places": 2
+           }
+          },
+          "displayName": "Cost ($)"
+         },
+         {
+          "fieldName": "sum(vector_search_usage__dbus)",
+          "format": {
+           "type": "number-plain",
+           "abbreviation": "compact",
+           "decimalPlaces": {
+            "type": "max",
+            "places": 1
+           }
+          },
+          "displayName": "DBUs"
+         },
+         {
+          "fieldName": "countdistinct(vector_search_usage__endpoint_name)",
+          "displayName": "Endpoints"
+         }
+        ]
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 11,
+      "width": 8,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "cnt_endpoints",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "countdistinct(vector_search_usage__endpoint_name)",
+           "expression": "COUNT(DISTINCT `vector_search_usage`.`endpoint_name`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": "Endpoints"
+       },
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "countdistinct(vector_search_usage__endpoint_name)",
+         "format": {
+          "type": "number-plain",
+          "abbreviation": "none",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 0
+          }
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 6,
+      "y": 2,
+      "width": 3,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "cnt_workspaces",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "fields": [
+          {
+           "name": "countdistinct(vector_search_usage__workspace_name)",
+           "expression": "COUNT(DISTINCT `vector_search_usage`.`workspace_name`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "frame": {
+        "showTitle": true,
+        "title": "Workspaces"
+       },
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "countdistinct(vector_search_usage__workspace_name)",
+         "format": {
+          "type": "number-plain",
+          "abbreviation": "none",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 0
+          }
+         }
+        }
+       },
+       "data": {
+        "queryName": "main_query"
+       }
+      }
+     },
+     "position": {
+      "x": 9,
+      "y": 2,
+      "width": 3,
+      "height": 3
+     }
+    }
+   ],
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layoutVersion": "GRID_V1"
+  }
+ ],
+ "uiSettings": {
+  "theme": {
+   "canvasBackgroundColor": {
+    "light": "#E6E9EA",
+    "dark": "#1E2931"
+   },
+   "widgetBackgroundColor": {
+    "light": "#FFFFFF",
+    "dark": "#15181C"
+   },
+   "widgetBorderColor": {
+    "light": "#F3F5F6",
+    "dark": "#21292F"
+   },
+   "fontColor": {
+    "light": "#1A2127",
+    "dark": "#EEF0F2"
+   },
+   "selectionColor": {
+    "light": "#0E7AB9",
+    "dark": "#41ADEC"
+   },
+   "visualizationColors": [
+    "#A6CEE3",
+    "#1F78B4",
+    "#B2DF8A",
+    "#33A02C",
+    "#FB9A99",
+    "#E31A1C",
+    "#FDBF6F",
+    "#FF7F00",
+    "#CAB2D6",
+    "#6A3D9A",
+    "#FFFF99",
+    "#B15928"
+   ],
+   "widgetHeaderAlignment": "LEFT",
+   "fontFamily": "Inter",
+   "widgetPadding": 8,
+   "widgetMargin": 4,
+   "widgetCornerRadius": 4,
+   "widgetShadow": 0,
+   "continuousGradient": {
+    "lightMode": {
+     "fromCategoricalIndex": 0
+    },
+    "darkMode": {
+     "fromCategoricalIndex": 0
+    }
+   },
+   "fontSettings": {
+    "base": {
+     "fontFamily": "Inter",
+     "fontColor": {
+      "light": "#1A2127",
+      "dark": "#EEF0F2"
+     },
+     "fontSize": 12,
+     "fontWeight": 400
+    },
+    "widgetTitle": {
+     "fontSize": 14,
+     "fontWeight": 500
+    },
+    "widgetDescription": {
+     "fontSize": 12,
+     "fontWeight": 400
+    },
+    "fieldTitle": {
+     "textCase": "TEXT_CASE_UPPERCASE",
+     "fontColor": {
+      "light": "#31373D",
+      "dark": "#D6D8DA"
+     },
+     "fontSize": 11,
+     "fontWeight": 400
+    },
+    "fieldValue": {
+     "fontColor": {
+      "light": "#31373D",
+      "dark": "#D6D8DA"
+     },
+     "fontSize": 11,
+     "fontWeight": 400
+    }
+   },
+   "gridLineColor": {
+    "light": "#D6D7D8",
+    "dark": "#3C3E42"
+   },
+   "axisLineColor": {
+    "light": "#B0B4B6",
+    "dark": "#555E64"
+   }
+  },
+  "genieSpace": {
+   "isEnabled": false,
+   "enablementMode": "ENABLEMENT_MODE_UNSPECIFIED"
+  },
+  "applyModeEnabled": false
+ }
+}
