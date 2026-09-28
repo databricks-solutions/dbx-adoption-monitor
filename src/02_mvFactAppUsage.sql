@@ -104,14 +104,15 @@ WITH
     WHERE rn = 1
   ),
 
-  -- Aggregate audit lifecycle events from system.access.audit for Apps rows, keyed by the app
-  -- NAME resolved across the action-specific request_params keys (audit never carries an id):
+  -- Resolve each audit lifecycle event's app NAME across the action-specific request_params
+  -- keys (audit never carries an id):
   --   'name'      — startApp / stopApp
   --   'app_name'  — deployApp
   --   'app' JSON  — createApp  (e.g. {"name":"my-app", ...})
   -- Coalescing across all three recovers deploy/create events the previous name-only read
-  -- dropped. Lookback lower bound applied to event_time.
-  audit_agg AS (
+  -- dropped. Rows are kept at event grain here (not yet aggregated) so the name->id mapping
+  -- below can aggregate by the canonical id. Lookback lower bound applied to event_time.
+  audit_events AS (
     SELECT
       cast(a.workspace_id AS BIGINT)                                 AS workspace_id,
       coalesce(
@@ -120,8 +121,7 @@ WITH
         get_json_object(a.request_params['app'], '$.name')
       )                                                              AS app_name,
       cast(a.event_date AS DATE)                                     AS usage_date,
-      count(*)                                                       AS lifecycle_events,
-      count(DISTINCT a.user_identity.email)                          AS distinct_users
+      a.user_identity.email                                          AS user_email
     FROM system.access.audit a
     WHERE a.service_name = 'apps'
       AND a.event_time >= date_sub(current_date(), :lookback_days)
@@ -130,24 +130,30 @@ WITH
             a.request_params['app_name'],
             get_json_object(a.request_params['app'], '$.name')
           ) IS NOT NULL
-    GROUP BY 1, 2, 3
   ),
 
-  -- Map audit's app_name to the canonical app_id via the billing crosswalk. Apps with audit
-  -- activity but no billing history (never incurred cost) are not in the crosswalk; they keep
-  -- the app_name as a stable synthetic id so they are not lost and never form a NULL bucket.
+  -- Map each audit event's app_name to the canonical app_id via the billing crosswalk, THEN
+  -- aggregate by app_id. Aggregating after the mapping is essential: names get reused across
+  -- ids (redeploys) but the reverse also happens — one app_id can appear under several names on
+  -- the same day (rename, or different request_params keys) — so name-level aggregation would
+  -- emit multiple rows per (app_id, usage_date, workspace_id) and violate the fact grain.
+  -- lifecycle_events sums every event for the id; distinct_users counts a user active under
+  -- more than one name only once. Apps with audit activity but no billing history are absent
+  -- from the crosswalk; they keep the app_name as a stable synthetic id so they are not lost
+  -- and never form a NULL bucket.
   audit_by_id AS (
     SELECT
       coalesce(x.app_id, e.app_name)  AS app_id,
-      e.app_name                      AS app_name,
+      max(e.app_name)                 AS app_name,
       e.usage_date                    AS usage_date,
       e.workspace_id                  AS workspace_id,
-      e.lifecycle_events              AS lifecycle_events,
-      e.distinct_users                AS distinct_users
-    FROM audit_agg e
+      count(*)                        AS lifecycle_events,
+      count(DISTINCT e.user_email)    AS distinct_users
+    FROM audit_events e
     LEFT JOIN app_crosswalk x
       ON  x.workspace_id = e.workspace_id
       AND x.app_name     = e.app_name
+    GROUP BY coalesce(x.app_id, e.app_name), e.usage_date, e.workspace_id
   )
 
 SELECT

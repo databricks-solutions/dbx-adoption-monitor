@@ -71,6 +71,23 @@ def test_conformed_model_uses_portable_identifiers(repo_root: Path) -> None:
         assert ":schema_name" in contents
 
 
+def test_app_usage_audit_aggregates_by_canonical_id(repo_root: Path) -> None:
+    """Regression guard for the fact_app_daily grain.
+
+    Audit lifecycle events must be mapped to the canonical app_id and then
+    aggregated by id, so an app seen under more than one name on the same day
+    collapses to a single (app_id, usage_date, workspace_id) row instead of
+    fanning out through the billing full-outer-join and breaking the grain.
+    Also keeps the source public-safe (parameterised, no workspace-specific
+    catalog/schema).
+    """
+    contents = (repo_root / "src" / "02_mvFactAppUsage.sql").read_text()
+    assert "field_eng_slc" not in contents
+    assert ":catalog_name" in contents
+    assert ":schema_name" in contents
+    assert "GROUP BY coalesce(x.app_id" in contents
+
+
 def test_conformed_tables_preserve_stable_identity(repo_root: Path) -> None:
     for name in (
         "04_conformed_dimensions.sql",
