@@ -2,6 +2,76 @@
 -- API-derived natural keys are always scoped by workspace_id. Existing adb_* tables
 -- remain untouched and continue to serve the legacy dashboard contract.
 
+-- Shared audit snapshot for the whole conformed layer.
+-- system.access.audit is eventually consistent: a row can become visible to a query minutes
+-- after its event_time. Because dimensions (this file) and their event facts
+-- (05_conformed_event_facts.sql) run as separate sequential tasks, each issuing its own live
+-- read of system.access.audit, a late-arriving row can be missed by the earlier dimension read
+-- yet caught by the later fact read. The fact then carries a (workspace_id, key) with no
+-- matching dimension member, breaking the "must resolve to dim_*" invariants in
+-- 08_verify_conformed_model.sql (observed intermittently, on a different key each run).
+--
+-- Materialising the relevant audit slice ONCE here, and having every audit-derived dimension
+-- below AND every audit-derived event fact in 05 read this committed table instead of a second
+-- live read of system.access.audit, removes the race by construction: both layers observe the
+-- identical set of rows no matter when their task executes. The slice is bounded to the
+-- services and actions the conformed event facts consume (plus the app OAuth and ACL actions,
+-- which are keyed by action_name rather than service_name). dim_principal below intentionally
+-- still reads system.access.audit directly, as it needs identities across every service and no
+-- referential invariant depends on it. user_email is personal data, mirroring dim_principal.
+CREATE TABLE IF NOT EXISTS IDENTIFIER(:catalog_name || '.' || :schema_name || '.stg_conformed_audit_events') (
+  workspace_id         BIGINT    COMMENT 'Databricks workspace identifier from the audit record.',
+  event_time           TIMESTAMP COMMENT 'Audit event timestamp.',
+  event_date           DATE      COMMENT 'Audit event calendar date.',
+  service_name         STRING    COMMENT 'Audit service_name (dashboards, aibiGenie, apps).',
+  action_name          STRING    COMMENT 'Audit action_name.',
+  request_id           STRING    COMMENT 'Audit request identifier used to build deterministic event keys.',
+  user_email           STRING    COMMENT 'Actor email from user_identity.email. Personal data; hashed by downstream facts.',
+  dashboard_id         STRING    COMMENT "request_params['dashboard_id'] for dashboards events.",
+  space_id             STRING    COMMENT "request_params['space_id'] for Genie events.",
+  app_name             STRING    COMMENT 'App name coalesced from the request_params name/app_name/app JSON keys for apps events.',
+  client_id            STRING    COMMENT "request_params['client_id'] for OAuth authentication events.",
+  response_status_code INT       COMMENT 'response.status_code, used to keep only successful authentication events.',
+  request_object_id    STRING    COMMENT "request_params['request_object_id'] for ACL change events.",
+  request_object_type  STRING    COMMENT "request_params['request_object_type'] for ACL change events.",
+  access_control_list  STRING    COMMENT "request_params['access_control_list'] JSON for ACL change events."
+) USING DELTA
+PARTITIONED BY (event_date)
+COMMENT 'Once-materialised system.access.audit slice shared by the conformed dimensions and event facts so both resolve against an identical, race-free snapshot. Bounded to :lookback_days and to the services/actions the conformed event facts consume.';
+
+INSERT OVERWRITE IDENTIFIER(:catalog_name || '.' || :schema_name || '.stg_conformed_audit_events')
+SELECT
+  CAST(a.workspace_id AS BIGINT)                        AS workspace_id,
+  a.event_time                                          AS event_time,
+  a.event_date                                          AS event_date,
+  a.service_name                                        AS service_name,
+  a.action_name                                         AS action_name,
+  a.request_id                                          AS request_id,
+  a.user_identity.email                                 AS user_email,
+  a.request_params['dashboard_id']                      AS dashboard_id,
+  a.request_params['space_id']                          AS space_id,
+  COALESCE(
+    a.request_params['name'],
+    a.request_params['app_name'],
+    get_json_object(a.request_params['app'], '$.name')
+  )                                                     AS app_name,
+  a.request_params['client_id']                         AS client_id,
+  CAST(a.response.status_code AS INT)                   AS response_status_code,
+  a.request_params['request_object_id']                 AS request_object_id,
+  a.request_params['request_object_type']               AS request_object_type,
+  a.request_params['access_control_list']               AS access_control_list
+FROM system.access.audit a
+WHERE a.event_time >= date_sub(current_date(), :lookback_days)
+  AND (
+    a.service_name IN ('dashboards', 'aibiGenie', 'apps')
+    OR a.action_name IN (
+      'workspaceInHouseOAuthClientAuthentication',
+      'mintOAuthToken',
+      'mintOAuthAuthorizationCode',
+      'changeAppsAcl'
+    )
+  );
+
 CREATE TABLE IF NOT EXISTS IDENTIFIER(:catalog_name || '.' || :schema_name || '.dim_workspace') (
   workspace_id BIGINT NOT NULL COMMENT 'Databricks workspace identifier.',
   workspace_name STRING COMMENT 'Current workspace display name.',
@@ -50,9 +120,8 @@ workspace_rows AS (
     SELECT CAST(workspace_id AS BIGINT)
     FROM IDENTIFIER(:catalog_name || '.' || :schema_name || '.dbsql_cost_per_query_table')
     UNION
-    SELECT CAST(workspace_id AS BIGINT)
-    FROM system.access.audit
-    WHERE event_time >= date_sub(current_date(), :lookback_days)
+    SELECT workspace_id
+    FROM IDENTIFIER(:catalog_name || '.' || :schema_name || '.stg_conformed_audit_events')
   )
   WHERE workspace_id IS NOT NULL
 )
@@ -173,18 +242,17 @@ candidates AS (
   WHERE d.dashboard_id IS NOT NULL
   UNION ALL
   SELECT
-    CAST(a.workspace_id AS BIGINT),
-    a.request_params['dashboard_id'],
-    concat('Dashboard ', a.request_params['dashboard_id']),
+    a.workspace_id,
+    a.dashboard_id,
+    concat('Dashboard ', a.dashboard_id),
     NULL,
     NULL,
     NULL,
     NULL,
     2
-  FROM system.access.audit a
+  FROM IDENTIFIER(:catalog_name || '.' || :schema_name || '.stg_conformed_audit_events') a
   WHERE a.service_name = 'dashboards'
-    AND a.request_params['dashboard_id'] IS NOT NULL
-    AND a.event_time >= date_sub(current_date(), :lookback_days)
+    AND a.dashboard_id IS NOT NULL
 ),
 ranked AS (
   SELECT *, row_number() OVER (
@@ -247,24 +315,39 @@ base_candidates AS (
     2
   FROM IDENTIFIER(:catalog_name || '.' || :schema_name || '.mvFactAppUsage') f
 ),
+-- Collapse each (workspace_id, app_id) to its single canonical name using the SAME
+-- precedence dim_app itself applies below (source_priority, then most-recent update_time).
+-- This reproduces dim_app's final non-audit membership: one row per app_id carrying its
+-- winning name. Counting names over this resolved set — rather than over raw base_candidates,
+-- where one app_id can appear under several names (e.g. a rename: same id billed as 'foo' and
+-- crawled as 'bar') — is what keeps the __AUDIT_NAME__ fallback decision below identical to the
+-- one 05_conformed_event_facts.sql makes when it keys fact_app_activity_event against dim_app.
+resolved_base_apps AS (
+  SELECT workspace_id, app_id, app_name
+  FROM (
+    SELECT
+      workspace_id, app_id, app_name,
+      row_number() OVER (
+        PARTITION BY workspace_id, app_id
+        ORDER BY source_priority, update_time DESC NULLS LAST
+      ) AS rn
+    FROM base_candidates
+  )
+  WHERE rn = 1
+),
 canonical_name_counts AS (
   SELECT workspace_id, app_name, COUNT(DISTINCT app_id) AS app_id_count
-  FROM base_candidates
+  FROM resolved_base_apps
   GROUP BY ALL
 ),
 audit_names AS (
   SELECT
-    CAST(workspace_id AS BIGINT) AS workspace_id,
-    COALESCE(
-      request_params['name'],
-      request_params['app_name'],
-      get_json_object(request_params['app'], '$.name')
-    ) AS app_name,
+    workspace_id,
+    app_name,
     MIN(event_time) AS first_seen_at,
     MAX(event_time) AS last_seen_at
-  FROM system.access.audit
+  FROM IDENTIFIER(:catalog_name || '.' || :schema_name || '.stg_conformed_audit_events')
   WHERE service_name = 'apps'
-    AND event_time >= date_sub(current_date(), :lookback_days)
   GROUP BY ALL
 ),
 candidates AS (
@@ -334,16 +417,15 @@ candidates AS (
   WHERE query_source_type = 'GENIE SPACE' AND query_source_id IS NOT NULL AND query_source_id <> 'UNKNOWN'
   UNION ALL
   SELECT
-    CAST(workspace_id AS BIGINT),
-    request_params['space_id'],
-    concat('Genie space ', request_params['space_id']),
+    workspace_id,
+    space_id,
+    concat('Genie space ', space_id),
     NULL,
     NULL,
     5
-  FROM system.access.audit
+  FROM IDENTIFIER(:catalog_name || '.' || :schema_name || '.stg_conformed_audit_events')
   WHERE service_name = 'aibiGenie'
-    AND request_params['space_id'] IS NOT NULL
-    AND event_time >= date_sub(current_date(), :lookback_days)
+    AND space_id IS NOT NULL
 ),
 ranked AS (
   SELECT *, row_number() OVER (

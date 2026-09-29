@@ -1,5 +1,12 @@
 -- Re-aggregation-safe event facts. Each row represents one source event or one
 -- Genie user question, so distinct-user measures remain correct at any time grain.
+--
+-- Audit-derived facts read the stg_conformed_audit_events table materialised by
+-- 04_conformed_dimensions.sql, not system.access.audit directly, so every event key resolves
+-- against the same committed audit snapshot the dimensions were built from. Reading audit live
+-- here would reintroduce the eventual-consistency race that leaves a fact referencing a
+-- dimension member that did not yet exist when the dimension was built. See the staging-table
+-- comment in 04 for the full rationale.
 
 CREATE TABLE IF NOT EXISTS IDENTIFIER(:catalog_name || '.' || :schema_name || '.fact_dashboard_view_event') (
   dashboard_view_event_id STRING NOT NULL COMMENT 'Deterministic event key derived from the audit request.',
@@ -22,23 +29,22 @@ SELECT DISTINCT
     COALESCE(a.request_id, ''),
     CAST(a.event_time AS STRING),
     a.action_name,
-    a.request_params['dashboard_id'],
-    COALESCE(lower(trim(a.user_identity.email)), '')
+    a.dashboard_id,
+    COALESCE(lower(trim(a.user_email)), '')
   ), 256) AS dashboard_view_event_id,
-  CAST(a.workspace_id AS BIGINT) AS workspace_id,
-  a.request_params['dashboard_id'] AS dashboard_id,
+  a.workspace_id AS workspace_id,
+  a.dashboard_id AS dashboard_id,
   CASE
-    WHEN a.user_identity.email IS NOT NULL THEN sha2(lower(trim(a.user_identity.email)), 256)
+    WHEN a.user_email IS NOT NULL THEN sha2(lower(trim(a.user_email)), 256)
   END AS principal_id,
   a.event_time AS viewed_at,
   a.event_date AS viewed_date,
   CASE WHEN a.action_name = 'getPublishedDashboard' THEN 'PUBLISHED' ELSE 'DRAFT' END AS view_type,
   CAST(1 AS BIGINT) AS view_count
-FROM system.access.audit a
+FROM IDENTIFIER(:catalog_name || '.' || :schema_name || '.stg_conformed_audit_events') a
 WHERE a.service_name = 'dashboards'
   AND a.action_name IN ('getDashboard', 'getPublishedDashboard')
-  AND a.request_params['dashboard_id'] IS NOT NULL
-  AND a.event_time >= date_sub(current_date(), :lookback_days);
+  AND a.dashboard_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS IDENTIFIER(:catalog_name || '.' || :schema_name || '.fact_genie_space_access_event') (
   genie_access_event_id STRING NOT NULL COMMENT 'Deterministic event key derived from the audit request.',
@@ -62,24 +68,23 @@ SELECT DISTINCT
     COALESCE(a.request_id, ''),
     CAST(a.event_time AS STRING),
     a.action_name,
-    a.request_params['space_id'],
-    COALESCE(lower(trim(a.user_identity.email)), '')
+    a.space_id,
+    COALESCE(lower(trim(a.user_email)), '')
   ), 256) AS genie_access_event_id,
-  CAST(a.workspace_id AS BIGINT) AS workspace_id,
-  a.request_params['space_id'] AS space_id,
+  a.workspace_id AS workspace_id,
+  a.space_id AS space_id,
   CASE
-    WHEN a.user_identity.email IS NOT NULL THEN sha2(lower(trim(a.user_identity.email)), 256)
+    WHEN a.user_email IS NOT NULL THEN sha2(lower(trim(a.user_email)), 256)
   END AS principal_id,
   a.event_time AS activity_at,
   a.event_date AS activity_date,
   CASE WHEN a.action_name = 'genieCreateSpace' THEN 'CREATE' ELSE 'OPEN' END AS action_type,
   CAST(a.action_name IN ('getSpace', 'genieGetSpace') AS BIGINT) AS open_count,
   CAST(a.action_name = 'genieCreateSpace' AS BIGINT) AS create_count
-FROM system.access.audit a
+FROM IDENTIFIER(:catalog_name || '.' || :schema_name || '.stg_conformed_audit_events') a
 WHERE a.service_name = 'aibiGenie'
   AND a.action_name IN ('getSpace', 'genieGetSpace', 'genieCreateSpace')
-  AND a.request_params['space_id'] IS NOT NULL
-  AND a.event_time >= date_sub(current_date(), :lookback_days);
+  AND a.space_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS IDENTIFIER(:catalog_name || '.' || :schema_name || '.fact_app_activity_event') (
   app_activity_event_id STRING NOT NULL COMMENT 'Deterministic event key derived from the audit request.',
@@ -97,16 +102,9 @@ COMMENT 'Atomic Databricks Apps lifecycle events from system.access.audit. Grain
 
 INSERT OVERWRITE IDENTIFIER(:catalog_name || '.' || :schema_name || '.fact_app_activity_event')
 WITH audit_events AS (
-  SELECT
-    a.*,
-    COALESCE(
-      a.request_params['name'],
-      a.request_params['app_name'],
-      get_json_object(a.request_params['app'], '$.name')
-    ) AS app_name
-  FROM system.access.audit a
-  WHERE a.service_name = 'apps'
-    AND a.event_time >= date_sub(current_date(), :lookback_days)
+  SELECT workspace_id, request_id, event_time, event_date, action_name, app_name, user_email
+  FROM IDENTIFIER(:catalog_name || '.' || :schema_name || '.stg_conformed_audit_events')
+  WHERE service_name = 'apps'
 ),
 app_lookup AS (
   SELECT workspace_id, app_name, MAX(app_id) AS app_id
@@ -123,16 +121,16 @@ SELECT DISTINCT
     CAST(a.event_time AS STRING),
     a.action_name,
     a.app_name,
-    COALESCE(lower(trim(a.user_identity.email)), '')
+    COALESCE(lower(trim(a.user_email)), '')
   ), 256) AS app_activity_event_id,
-  CAST(a.workspace_id AS BIGINT) AS workspace_id,
+  a.workspace_id AS workspace_id,
   COALESCE(
     d.app_id,
     concat('__AUDIT_NAME__:', sha2(lower(trim(a.app_name)), 256))
   ) AS app_id,
   a.app_name,
   CASE
-    WHEN a.user_identity.email IS NOT NULL THEN sha2(lower(trim(a.user_identity.email)), 256)
+    WHEN a.user_email IS NOT NULL THEN sha2(lower(trim(a.user_email)), 256)
   END AS principal_id,
   a.event_time AS activity_at,
   a.event_date AS activity_date,
@@ -140,7 +138,7 @@ SELECT DISTINCT
   CAST(1 AS BIGINT) AS lifecycle_event_count
 FROM audit_events a
 LEFT JOIN app_lookup d
-  ON d.workspace_id = CAST(a.workspace_id AS BIGINT)
+  ON d.workspace_id = a.workspace_id
   AND d.app_name = a.app_name
 WHERE a.app_name IS NOT NULL;
 
@@ -263,23 +261,22 @@ SELECT DISTINCT
     COALESCE(a.request_id, ''),
     CAST(a.event_time AS STRING),
     a.action_name,
-    COALESCE(lower(trim(a.user_identity.email)), '')
+    COALESCE(lower(trim(a.user_email)), '')
   ), 256),
-  CAST(a.workspace_id AS BIGINT),
-  CASE WHEN a.user_identity.email IS NOT NULL THEN sha2(lower(trim(a.user_identity.email)), 256) END,
+  a.workspace_id,
+  CASE WHEN a.user_email IS NOT NULL THEN sha2(lower(trim(a.user_email)), 256) END,
   a.event_time,
   a.event_date,
   a.action_name,
   CAST(1 AS BIGINT)
-FROM system.access.audit a
+FROM IDENTIFIER(:catalog_name || '.' || :schema_name || '.stg_conformed_audit_events') a
 WHERE a.action_name IN (
     'workspaceInHouseOAuthClientAuthentication',
     'mintOAuthToken',
     'mintOAuthAuthorizationCode'
   )
-  AND COALESCE(a.request_params['client_id'], '') <> 'databricks-cli'
-  AND a.response.status_code = 200
-  AND a.event_time >= date_sub(current_date(), :lookback_days);
+  AND COALESCE(a.client_id, '') <> 'databricks-cli'
+  AND a.response_status_code = 200;
 
 CREATE TABLE IF NOT EXISTS IDENTIFIER(:catalog_name || '.' || :schema_name || '.fact_app_permission_change_event') (
   app_permission_event_id STRING NOT NULL COMMENT 'Deterministic key for one grantee entry in an app ACL change request.',
@@ -302,32 +299,31 @@ SELECT DISTINCT
     '|',
     CAST(a.workspace_id AS STRING),
     COALESCE(a.request_id, ''),
-    COALESCE(a.request_params['request_object_id'], ''),
+    COALESCE(a.request_object_id, ''),
     COALESCE(acl_entry.user_name, acl_entry.group_name, ''),
     COALESCE(acl_entry.permission_level, '')
   ), 256),
-  CAST(a.workspace_id AS BIGINT),
-  a.request_params['request_object_id'],
-  CASE WHEN a.user_identity.email IS NOT NULL THEN sha2(lower(trim(a.user_identity.email)), 256) END,
+  a.workspace_id,
+  a.request_object_id,
+  CASE WHEN a.user_email IS NOT NULL THEN sha2(lower(trim(a.user_email)), 256) END,
   sha2(lower(trim(COALESCE(acl_entry.user_name, acl_entry.group_name))), 256),
   CASE WHEN acl_entry.user_name IS NOT NULL THEN 'USER' ELSE 'GROUP' END,
   a.event_time,
   a.event_date,
   acl_entry.permission_level,
   CAST(1 AS BIGINT)
-FROM system.access.audit a
+FROM IDENTIFIER(:catalog_name || '.' || :schema_name || '.stg_conformed_audit_events') a
 LATERAL VIEW explode(
   from_json(
-    a.request_params['access_control_list'],
+    a.access_control_list,
     'array<struct<user_name:string,permission_level:string,group_name:string>>'
   )
 ) exploded AS acl_entry
 WHERE a.action_name = 'changeAppsAcl'
-  AND a.request_params['request_object_type'] = 'apps'
-  AND a.request_params['request_object_id'] IS NOT NULL
+  AND a.request_object_type = 'apps'
+  AND a.request_object_id IS NOT NULL
   AND COALESCE(acl_entry.user_name, acl_entry.group_name) IS NOT NULL
-  AND acl_entry.permission_level IS NOT NULL
-  AND a.event_time >= date_sub(current_date(), :lookback_days);
+  AND acl_entry.permission_level IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS IDENTIFIER(:catalog_name || '.' || :schema_name || '.fact_genie_feedback_comment') (
   workspace_id BIGINT NOT NULL COMMENT 'Workspace containing the Genie feedback comment.',
