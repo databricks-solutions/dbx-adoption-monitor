@@ -88,6 +88,22 @@ def test_app_usage_audit_aggregates_by_canonical_id(repo_root: Path) -> None:
     assert "GROUP BY coalesce(x.app_id" in contents
 
 
+def test_dim_app_audit_fallback_matches_event_fact_resolution(repo_root: Path) -> None:
+    """Regression guard for the fact_app_activity_event -> dim_app referential check.
+
+    fact_app_activity_event (05) mints an ``__AUDIT_NAME__`` id whenever an audit
+    name does not map to exactly one non-audit app_id in dim_app's *resolved* rows
+    (one canonical name per app_id). dim_app (04) must decide whether to emit that
+    same fallback member off the identical, per-app_id-resolved name count -- not off
+    raw base_candidates, where a renamed app can appear under several names and make a
+    name look uniquely resolvable when it is not. Counting over raw candidates
+    reintroduces the orphan __AUDIT_NAME__ id that breaks the resolution assertion.
+    """
+    contents = (repo_root / "src" / "04_conformed_dimensions.sql").read_text()
+    assert "resolved_base_apps" in contents
+    assert "FROM resolved_base_apps" in contents
+
+
 def test_conformed_tables_preserve_stable_identity(repo_root: Path) -> None:
     for name in (
         "04_conformed_dimensions.sql",

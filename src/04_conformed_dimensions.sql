@@ -247,9 +247,29 @@ base_candidates AS (
     2
   FROM IDENTIFIER(:catalog_name || '.' || :schema_name || '.mvFactAppUsage') f
 ),
+-- Collapse each (workspace_id, app_id) to its single canonical name using the SAME
+-- precedence dim_app itself applies below (source_priority, then most-recent update_time).
+-- This reproduces dim_app's final non-audit membership: one row per app_id carrying its
+-- winning name. Counting names over this resolved set — rather than over raw base_candidates,
+-- where one app_id can appear under several names (e.g. a rename: same id billed as 'foo' and
+-- crawled as 'bar') — is what keeps the __AUDIT_NAME__ fallback decision below identical to the
+-- one 05_conformed_event_facts.sql makes when it keys fact_app_activity_event against dim_app.
+resolved_base_apps AS (
+  SELECT workspace_id, app_id, app_name
+  FROM (
+    SELECT
+      workspace_id, app_id, app_name,
+      row_number() OVER (
+        PARTITION BY workspace_id, app_id
+        ORDER BY source_priority, update_time DESC NULLS LAST
+      ) AS rn
+    FROM base_candidates
+  )
+  WHERE rn = 1
+),
 canonical_name_counts AS (
   SELECT workspace_id, app_name, COUNT(DISTINCT app_id) AS app_id_count
-  FROM base_candidates
+  FROM resolved_base_apps
   GROUP BY ALL
 ),
 audit_names AS (
